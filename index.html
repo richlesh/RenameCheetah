@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>RenameCheetah</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="panels">
+    <!-- Left Panel: Scripts List -->
+    <div id="left-panel">
+      <div class="panel-header">Scripts</div>
+      <div id="scripts-list"></div>
+      <div class="panel-buttons">
+        <button id="add-script" title="Add Script">+</button>
+        <button id="del-script" title="Delete Script">−</button>
+        <button id="dup-script" title="Duplicate Script">⧉</button>
+      </div>
+    </div>
+
+    <div class="divider" id="divider-left"></div>
+
+    <!-- Middle Panel: Script Steps -->
+    <div id="middle-panel">
+      <div class="panel-header">Steps</div>
+      <div id="steps-list"></div>
+      <div class="panel-buttons">
+        <button id="add-step" title="Add Step">+</button>
+        <button id="del-step" title="Delete Step">−</button>
+      </div>
+    </div>
+
+    <div class="divider" id="divider-right"></div>
+
+    <!-- Right Panel: File Drop & Preview -->
+    <div id="right-panel">
+      <div class="panel-header">Files</div>
+      <div id="file-drop-zone">
+        <table id="file-table">
+          <thead>
+            <tr>
+              <th id="col-current" class="sortable" style="width:50%">Current Name <span class="sort-arrow">▲</span></th>
+              <th class="col-divider-th"><div class="col-divider" id="col-divider"></div></th>
+              <th id="col-new" class="sortable">New Name <span class="sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="file-tbody"></tbody>
+        </table>
+        <div id="drop-overlay">Drop files here</div>
+      </div>
+      <div id="status-bar">
+        <button id="rename-btn" disabled title="Rename Files">▶</button>
+        <span id="status-text"></span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { ipcRenderer, webUtils } = require("electron");
+    const path = require("path");
+    const fs = require("fs");
+    const config = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
+    const { load, save } = require("./settings");
+
+    let scripts = [];
+    let selectedScriptIdx = -1;
+    let selectedStepIdx = -1;
+    let files = [];
+    let selectedFiles = new Set();
+    let sortCol = "current";
+    let sortAsc = true;
+    let dragSrcIdx = null;
+
+    // --- Init ---
+    function init() {
+      const settings = load();
+      scripts = settings.scripts || [];
+      if (scripts.length > 0) selectedScriptIdx = 0;
+      renderScripts();
+      renderSteps();
+      updatePreview();
+      startAutosave();
+    }
+
+    // --- Autosave ---
+    function startAutosave() {
+      const interval = (config.autosaveIntervalSeconds || 120) * 1000;
+      setInterval(() => saveScripts(), interval);
+    }
+
+    function saveScripts() {
+      const settings = load();
+      settings.scripts = scripts;
+      save(settings);
+    }
+
+    // Save on window close / app quit
+    window.addEventListener("beforeunload", () => saveScripts());
+
+    // --- Scripts Panel ---
+    function renderScripts() {
+      const list = document.getElementById("scripts-list");
+      list.innerHTML = "";
+      scripts.forEach((s, i) => {
+        const div = document.createElement("div");
+        div.className = "script-item" + (i === selectedScriptIdx ? " selected" : "");
+
+        const span = document.createElement("span");
+        span.className = "script-name";
+        span.textContent = s.name;
+        div.appendChild(span);
+
+        div.addEventListener("click", () => {
+          if (i !== selectedScriptIdx) { saveScripts(); selectedScriptIdx = i; selectedStepIdx = -1; renderScripts(); renderSteps(); updatePreview(); }
+        });
+
+        span.addEventListener("dblclick", (e) => {
+          if (i !== selectedScriptIdx) return;
+          e.stopPropagation();
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "script-name-input";
+          input.value = s.name;
+          div.replaceChild(input, span);
+          input.focus();
+          input.select();
+          const commit = () => {
+            const val = input.value.trim();
+            if (val) s.name = val;
+            renderScripts();
+          };
+          input.addEventListener("blur", commit);
+          input.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") input.blur();
+            if (ev.key === "Escape") { input.value = s.name; input.blur(); }
+          });
+        });
+
+        list.appendChild(div);
+      });
+    }
+
+    document.getElementById("add-script").addEventListener("click", () => {
+      scripts.push({ name: "Untitled", steps: [] });
+      selectedScriptIdx = scripts.length - 1;
+      selectedStepIdx = -1;
+      renderScripts();
+      renderSteps();
+      updatePreview();
+    });
+
+    document.getElementById("del-script").addEventListener("click", () => {
+      if (selectedScriptIdx < 0) return;
+      scripts.splice(selectedScriptIdx, 1);
+      selectedScriptIdx = Math.min(selectedScriptIdx, scripts.length - 1);
+      selectedStepIdx = -1;
+      renderScripts();
+      renderSteps();
+      updatePreview();
+    });
+
+    document.getElementById("dup-script").addEventListener("click", () => {
+      if (selectedScriptIdx < 0) return;
+      const copy = JSON.parse(JSON.stringify(scripts[selectedScriptIdx]));
+      copy.name += " Copy";
+      scripts.splice(selectedScriptIdx + 1, 0, copy);
+      selectedScriptIdx++;
+      renderScripts();
+      renderSteps();
+      updatePreview();
+    });
+
+    // --- Steps Panel ---
+    function renderSteps() {
+      const list = document.getElementById("steps-list");
+      list.innerHTML = "";
+      const script = scripts[selectedScriptIdx];
+      if (!script) return;
+      script.steps.forEach((step, i) => {
+        const div = document.createElement("div");
+        div.className = "step-card" + (i === selectedStepIdx ? " selected" : "");
+        div.draggable = true;
+        div.dataset.idx = i;
+        div.addEventListener("mousedown", (e) => {
+          if (e.target.closest("select, input, button")) return;
+          selectedStepIdx = i;
+          renderSteps();
+        });
+        div.addEventListener("dragstart", (e) => { dragSrcIdx = i; e.dataTransfer.effectAllowed = "move"; });
+        div.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; div.classList.add("drag-over"); });
+        div.addEventListener("dragleave", () => div.classList.remove("drag-over"));
+        div.addEventListener("drop", (e) => {
+          e.preventDefault();
+          div.classList.remove("drag-over");
+          if (dragSrcIdx === null || dragSrcIdx === i) return;
+          const [moved] = script.steps.splice(dragSrcIdx, 1);
+          script.steps.splice(i, 0, moved);
+          selectedStepIdx = i;
+          dragSrcIdx = null;
+          renderSteps();
+          updatePreview();
+        });
+
+        // Type selector
+        const select = document.createElement("select");
+        select.className = "step-type-select";
+        ["Find & Replace", "Remove Text", "Add Prefix", "Add Suffix", "Convert Case"].forEach(t => {
+          const opt = document.createElement("option");
+          opt.value = t;
+          opt.textContent = t;
+          if (step.type === t) opt.selected = true;
+          select.appendChild(opt);
+        });
+        select.addEventListener("change", () => {
+          step.type = select.value;
+          resetStepFields(step);
+          renderSteps();
+          updatePreview();
+        });
+        div.appendChild(select);
+
+        // Fields
+        const fields = document.createElement("div");
+        fields.className = "step-fields";
+        buildStepFields(fields, step, i);
+        div.appendChild(fields);
+
+        list.appendChild(div);
+      });
+    }
+
+    function resetStepFields(step) {
+      const type = step.type;
+      Object.keys(step).forEach(k => { if (k !== "type") delete step[k]; });
+      if (type === "Find & Replace") { step.applyTo = "name"; step.find = ""; step.replace = ""; step.matchCase = false; step.firstOnly = false; }
+      else if (type === "Remove Text") { step.remove = ""; step.firstOnly = false; }
+      else if (type === "Add Prefix") { step.prefix = ""; }
+      else if (type === "Add Suffix") { step.suffix = ""; }
+      else if (type === "Convert Case") { step.applyTo = "name"; step.caseType = "lower"; }
+    }
+
+    function buildStepFields(container, step, idx) {
+      const onChange = () => updatePreview();
+
+      if (step.type === "Find & Replace") {
+        container.appendChild(makeApplyTo(step, onChange));
+        container.appendChild(makeInput("Find:", step, "find", onChange));
+        container.appendChild(makeInput("Replace:", step, "replace", onChange));
+        container.appendChild(makeCheckbox("Match Case", step, "matchCase", onChange));
+        container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
+      } else if (step.type === "Remove Text") {
+        container.appendChild(makeInput("Remove:", step, "remove", onChange));
+        container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
+      } else if (step.type === "Add Prefix") {
+        container.appendChild(makeInput("Prefix:", step, "prefix", onChange));
+      } else if (step.type === "Add Suffix") {
+        container.appendChild(makeInput("Suffix:", step, "suffix", onChange));
+      } else if (step.type === "Convert Case") {
+        container.appendChild(makeApplyTo(step, onChange));
+        container.appendChild(makeCaseButtons(step, onChange));
+      }
+    }
+
+    function makeApplyTo(step, onChange) {
+      const div = document.createElement("div");
+      div.className = "field-row";
+      div.innerHTML = `<label>Apply To:</label>`;
+      const sel = document.createElement("select");
+      [["name", "Name Only"], ["ext", "Extension Only"], ["both", "Name and Extension"]].forEach(([v, l]) => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = l;
+        if (step.applyTo === v) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change", () => { step.applyTo = sel.value; onChange(); });
+      div.appendChild(sel);
+      return div;
+    }
+
+    function makeInput(label, step, key, onChange) {
+      const div = document.createElement("div");
+      div.className = "field-row";
+      div.innerHTML = `<label>${label}</label>`;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = step[key] || "";
+      input.addEventListener("input", () => { step[key] = input.value; onChange(); });
+      div.appendChild(input);
+      return div;
+    }
+
+    function makeCheckbox(label, step, key, onChange) {
+      const div = document.createElement("div");
+      div.className = "field-row";
+      const lbl = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!step[key];
+      cb.addEventListener("change", () => { step[key] = cb.checked; onChange(); });
+      lbl.appendChild(cb);
+      lbl.append(" " + label);
+      div.appendChild(lbl);
+      return div;
+    }
+
+    function makeCaseButtons(step, onChange) {
+      const div = document.createElement("div");
+      div.className = "field-row case-buttons";
+      div.innerHTML = `<label>Case:</label>`;
+      [["lower", "ab"], ["upper", "AB"], ["title", "Ab"]].forEach(([v, l]) => {
+        const btn = document.createElement("button");
+        btn.textContent = l;
+        btn.className = "case-btn" + (step.caseType === v ? " active" : "");
+        btn.addEventListener("click", (e) => { e.stopPropagation(); step.caseType = v; onChange(); renderSteps(); });
+        div.appendChild(btn);
+      });
+      return div;
+    }
+
+    document.getElementById("add-step").addEventListener("click", () => {
+      const script = scripts[selectedScriptIdx];
+      if (!script) return;
+      const step = { type: "Find & Replace", applyTo: "name", find: "", replace: "", matchCase: false, firstOnly: false };
+      script.steps.push(step);
+      selectedStepIdx = script.steps.length - 1;
+      renderSteps();
+      updatePreview();
+    });
+
+    document.getElementById("del-step").addEventListener("click", () => {
+      const script = scripts[selectedScriptIdx];
+      if (!script || selectedStepIdx < 0) return;
+      script.steps.splice(selectedStepIdx, 1);
+      selectedStepIdx = Math.min(selectedStepIdx, script.steps.length - 1);
+      renderSteps();
+      updatePreview();
+    });
+
+    // --- Rename Engine ---
+    function applyScript(filename) {
+      const script = scripts[selectedScriptIdx];
+      if (!script) return filename;
+      let dotIdx = filename.lastIndexOf(".");
+      let name = dotIdx > 0 ? filename.slice(0, dotIdx) : filename;
+      let ext = dotIdx > 0 ? filename.slice(dotIdx + 1) : "";
+
+      for (const step of script.steps) {
+        [name, ext] = applyStep(step, name, ext);
+      }
+      return ext ? name + "." + ext : name;
+    }
+
+    function applyStep(step, name, ext) {
+      if (step.type === "Find & Replace") {
+        const target = getTarget(step.applyTo, name, ext);
+        const result = doReplace(target, step.find, step.replace, step.matchCase, step.firstOnly);
+        return setTarget(step.applyTo, name, ext, result);
+      } else if (step.type === "Remove Text") {
+        const target = name + (ext ? "." + ext : "");
+        let n = name, e = ext;
+        // Remove applies to full filename
+        const result = doReplace(n, step.remove, "", false, step.firstOnly);
+        return [result, ext];
+      } else if (step.type === "Add Prefix") {
+        return [step.prefix + name, ext];
+      } else if (step.type === "Add Suffix") {
+        return [name + step.suffix, ext];
+      } else if (step.type === "Convert Case") {
+        const target = getTarget(step.applyTo, name, ext);
+        const result = convertCase(target, step.caseType);
+        return setTarget(step.applyTo, name, ext, result);
+      }
+      return [name, ext];
+    }
+
+    function getTarget(applyTo, name, ext) {
+      if (applyTo === "name") return name;
+      if (applyTo === "ext") return ext;
+      return ext ? name + "." + ext : name;
+    }
+
+    function setTarget(applyTo, name, ext, result) {
+      if (applyTo === "name") return [result, ext];
+      if (applyTo === "ext") return [name, result];
+      const dotIdx = result.lastIndexOf(".");
+      if (dotIdx > 0) return [result.slice(0, dotIdx), result.slice(dotIdx + 1)];
+      return [result, ""];
+    }
+
+    function doReplace(str, find, replace, matchCase, firstOnly) {
+      if (!find) return str;
+      const flags = (matchCase ? "" : "i") + (firstOnly ? "" : "g");
+      const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return str.replace(new RegExp(escaped, flags), replace);
+    }
+
+    function convertCase(str, caseType) {
+      if (caseType === "lower") return str.toLowerCase();
+      if (caseType === "upper") return str.toUpperCase();
+      return str.replace(/\b\w/g, c => c.toUpperCase()).replace(/\B\w/g, c => c.toLowerCase());
+    }
+
+    // --- File Panel ---
+    function addFiles(filePaths) {
+      for (const fp of filePaths) {
+        try { if (!fs.statSync(fp).isFile()) continue; } catch { continue; }
+        if (!files.find(f => f.path === fp)) files.push({ path: fp, name: path.basename(fp) });
+      }
+      updatePreview();
+    }
+
+    // Menu handlers
+    ipcRenderer.on("menu-add-files", async () => {
+      const filePaths = await ipcRenderer.invoke("pick-files");
+      addFiles(filePaths);
+    });
+    ipcRenderer.on("menu-clear-files", () => { files = []; selectedFiles.clear(); updatePreview(); });
+    ipcRenderer.on("menu-remove-file", () => {
+      if (selectedFiles.size === 0) return;
+      files = files.filter(f => !selectedFiles.has(f));
+      selectedFiles.clear();
+      updatePreview();
+    });
+    // Fallback: files dropped via main process
+    ipcRenderer.on("files-dropped", (_e, paths) => addFiles(paths));
+
+
+
+    // Drag and drop
+    const dropZone = document.getElementById("file-drop-zone");
+    const overlay = document.getElementById("drop-overlay");
+
+    // Drag and drop
+    // Must preventDefault on dragover to allow drop events to fire
+    document.addEventListener("dragover", (e) => e.preventDefault());
+    // Fallback: prevent navigation if drop isn't caught by the drop zone
+    document.addEventListener("drop", (e) => e.preventDefault());
+
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      overlay.classList.add("visible");
+    });
+    dropZone.addEventListener("dragleave", (e) => {
+      if (!dropZone.contains(e.relatedTarget)) overlay.classList.remove("visible");
+    });
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      overlay.classList.remove("visible");
+      const paths = [];
+      if (e.dataTransfer && e.dataTransfer.files) {
+        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+          const fp = webUtils.getPathForFile(e.dataTransfer.files[i]);
+          if (fp) paths.push(fp);
+        }
+      }
+      if (paths.length > 0) { addFiles(paths); ipcRenderer.invoke("focus-window"); }
+    });
+
+    // Context menu on empty area of file table
+    dropZone.addEventListener("contextmenu", (e) => {
+      if (e.target.closest("tr")) return;
+      e.preventDefault();
+      ipcRenderer.invoke("show-file-context-menu", false);
+    });
+
+    function updatePreview() {
+      const tbody = document.getElementById("file-tbody");
+      const evenColor = config.rowColorEven || "#000000";
+      const oddColor = config.rowColorOdd || "#1a1a1a";
+
+      // Compute new names
+      files.forEach(f => { f.newName = applyScript(f.name); });
+
+      // Sort
+      const sorted = [...files];
+      sorted.sort((a, b) => {
+        const av = sortCol === "current" ? a.name : a.newName;
+        const bv = sortCol === "current" ? b.name : b.newName;
+        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+
+      const selColor = load().selectionColor || config.selectionColor || "#2e7d32";
+
+      tbody.innerHTML = "";
+      sorted.forEach((f, i) => {
+        const tr = document.createElement("tr");
+        const isSelected = selectedFiles.has(f);
+        tr.style.background = isSelected ? selColor : (i % 2 === 0 ? evenColor : oddColor);
+        const changed = f.name !== f.newName;
+        const tdCurrent = document.createElement("td");
+        tdCurrent.textContent = f.name;
+        const tdNew = document.createElement("td");
+        tdNew.textContent = f.newName;
+        if (changed) tdNew.className = "changed";
+        tr.appendChild(tdCurrent);
+        tr.appendChild(document.createElement("td"));
+        tr.appendChild(tdNew);
+
+        // Click to select/deselect (multi-select)
+        tr.addEventListener("click", (e) => {
+          if (e.target.tagName === "INPUT") return;
+          if (e.metaKey || e.ctrlKey) {
+            if (selectedFiles.has(f)) selectedFiles.delete(f); else selectedFiles.add(f);
+          } else if (e.shiftKey && selectedFiles.size > 0) {
+            const lastSelected = [...selectedFiles].pop();
+            const lastIdx = sorted.indexOf(lastSelected);
+            const curIdx = sorted.indexOf(f);
+            const [start, end] = lastIdx < curIdx ? [lastIdx, curIdx] : [curIdx, lastIdx];
+            for (let j = start; j <= end; j++) selectedFiles.add(sorted[j]);
+          } else {
+            selectedFiles.clear();
+            selectedFiles.add(f);
+          }
+          updatePreview();
+        });
+
+        // Double-click current name to rename immediately
+        tdCurrent.addEventListener("dblclick", () => {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "inline-rename";
+          input.value = f.name;
+          tdCurrent.textContent = "";
+          tdCurrent.appendChild(input);
+          input.focus();
+          input.select();
+          const commit = () => {
+            const val = input.value.trim();
+            if (val && val !== f.name) {
+              try {
+                const newPath = path.join(path.dirname(f.path), val);
+                fs.renameSync(f.path, newPath);
+                f.path = newPath;
+                f.name = val;
+              } catch (err) { alert("Rename failed: " + err.message); }
+            }
+            updatePreview();
+          };
+          input.addEventListener("blur", commit);
+          input.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") input.blur();
+            if (ev.key === "Escape") { input.value = f.name; input.blur(); }
+          });
+        });
+
+        // Right-click context menu
+        tr.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          if (!selectedFiles.has(f)) { selectedFiles.clear(); selectedFiles.add(f); updatePreview(); }
+          ipcRenderer.invoke("show-file-context-menu", selectedFiles.size > 0);
+        });
+
+        tbody.appendChild(tr);
+      });
+
+      // Context menu on empty area of table is handled outside updatePreview
+
+      // Status
+      const toRename = files.filter(f => f.name !== f.newName).length;
+      const statusEl = document.getElementById("status-text");
+      if (files.length === 0) {
+        statusEl.textContent = "Drop files to begin";
+      } else {
+        statusEl.textContent = `${toRename} of ${files.length} file${files.length !== 1 ? "s" : ""} to be renamed`;
+      }
+
+      // Rename button
+      document.getElementById("rename-btn").disabled = toRename === 0;
+
+      // Update menu enabled state
+      ipcRenderer.invoke("update-selection", selectedFiles.size > 0);
+
+      // Sort arrows
+      document.querySelector("#col-current .sort-arrow").textContent = sortCol === "current" ? (sortAsc ? "▲" : "▼") : "";
+      document.querySelector("#col-new .sort-arrow").textContent = sortCol === "new" ? (sortAsc ? "▲" : "▼") : "";
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Sort handlers
+    document.getElementById("col-current").addEventListener("click", () => {
+      if (sortCol === "current") sortAsc = !sortAsc; else { sortCol = "current"; sortAsc = true; }
+      updatePreview();
+    });
+    document.getElementById("col-new").addEventListener("click", () => {
+      if (sortCol === "new") sortAsc = !sortAsc; else { sortCol = "new"; sortAsc = true; }
+      updatePreview();
+    });
+
+    // Rename button
+    document.getElementById("rename-btn").addEventListener("click", async () => {
+      const toRename = files.filter(f => f.name !== f.newName);
+      if (toRename.length === 0) return;
+      const result = await ipcRenderer.invoke("rename-files", toRename.map(f => ({ oldPath: f.path, newPath: path.join(path.dirname(f.path), f.newName) })));
+      if (result.error) {
+        alert("Error: " + result.error);
+      } else {
+        // Update file list with new names
+        toRename.forEach(f => {
+          f.path = path.join(path.dirname(f.path), f.newName);
+          f.name = f.newName;
+        });
+        updatePreview();
+      }
+    });
+
+    // --- Resizable Dividers ---
+    function saveDividerPositions() {
+      const settings = load();
+      settings.panelWidths = {
+        left: document.getElementById("left-panel").getBoundingClientRect().width,
+        middle: document.getElementById("middle-panel").getBoundingClientRect().width,
+      };
+      save(settings);
+    }
+
+    function restoreDividerPositions() {
+      const settings = load();
+      if (settings.panelWidths) {
+        document.getElementById("left-panel").style.width = settings.panelWidths.left + "px";
+        document.getElementById("middle-panel").style.width = settings.panelWidths.middle + "px";
+      }
+    }
+
+    function initDivider(dividerId, leftPanel, rightPanel, isRightDivider) {
+      const divider = document.getElementById(dividerId);
+      let startX, startLeftW;
+      divider.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startLeftW = leftPanel.getBoundingClientRect().width;
+        divider.classList.add("active");
+        const onMove = (e) => {
+          const dx = e.clientX - startX;
+          leftPanel.style.width = Math.max(100, startLeftW + dx) + "px";
+        };
+        const onUp = () => {
+          divider.classList.remove("active");
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          saveDividerPositions();
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+    }
+
+    initDivider("divider-left", document.getElementById("left-panel"), document.getElementById("middle-panel"));
+    initDivider("divider-right", document.getElementById("middle-panel"), document.getElementById("right-panel"));
+
+    // Column divider
+    const colDivider = document.getElementById("col-divider");
+    const colCurrent = document.getElementById("col-current");
+    (() => {
+      let startX, startW;
+      colDivider.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startX = e.clientX;
+        startW = colCurrent.offsetWidth;
+        colDivider.classList.add("active");
+        const table = document.getElementById("file-table");
+        const onMove = (e) => {
+          const pct = Math.max(10, Math.min(90, ((startW + e.clientX - startX) / table.offsetWidth) * 100));
+          colCurrent.style.width = pct + "%";
+        };
+        const onUp = () => {
+          colDivider.classList.remove("active");
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+    })();
+
+    restoreDividerPositions();
+
+    init();
+  </script>
+</body>
+</html>
