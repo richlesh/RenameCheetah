@@ -59,6 +59,7 @@
     const { ipcRenderer, webUtils } = require("electron");
     const path = require("path");
     const fs = require("fs");
+    const nodeCrypto = require("crypto");
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
     const { load, save } = require("./settings");
 
@@ -106,6 +107,10 @@
 
     // --- Scripts Panel ---
     function renderScripts() {
+      // Keep scripts sorted alphabetically
+      const selectedScript = scripts[selectedScriptIdx] || null;
+      scripts.sort((a, b) => a.name.localeCompare(b.name));
+      if (selectedScript) selectedScriptIdx = scripts.indexOf(selectedScript);
       const list = document.getElementById("scripts-list");
       list.innerHTML = "";
       const scriptHL = load().scriptHighlightColor || config.scriptHighlightColor || "#0a84ff";
@@ -225,7 +230,7 @@
         // Type selector
         const select = document.createElement("select");
         select.className = "step-type-select";
-        ["Find & Replace", "Regular Expression", "Remove Text", "Add Prefix", "Add Suffix", "Add Date/Time", "Add Photo Metadata", "Convert Case"].forEach(t => {
+        ["Add Audio Metadata", "Add Date/Time", "Add Photo Metadata", "Add Prefix", "Add Sequence Number", "Add Suffix", "Add Video Metadata", "Add/Replace Hash", "Convert Case", "Find & Replace", "Insert at Position", "Pad Number", "Regular Expression", "Remove Text", "Renumber", "Replace Spaces", "Sanitize", "Swap", "Trim"].forEach(t => {
           const opt = document.createElement("option");
           opt.value = t;
           opt.textContent = t;
@@ -255,11 +260,22 @@
       Object.keys(step).forEach(k => { if (k !== "type") delete step[k]; });
       if (type === "Find & Replace") { step.applyTo = "name"; step.find = ""; step.replace = ""; step.matchCase = false; step.firstOnly = false; }
       else if (type === "Regular Expression") { step.applyTo = "name"; step.pattern = ""; step.replace = ""; step.matchCase = false; step.firstOnly = false; }
-      else if (type === "Remove Text") { step.remove = ""; step.firstOnly = false; }
+      else if (type === "Remove Text") { step.remove = ""; step.matchCase = false; step.firstOnly = false; }
+      else if (type === "Insert at Position") { step.text = ""; step.position = 0; step.fromEnd = false; }
+      else if (type === "Trim") { step.count = 1; step.fromEnd = false; }
+      else if (type === "Swap") { step.delimiter = " - "; }
       else if (type === "Add Prefix") { step.prefix = ""; }
       else if (type === "Add Suffix") { step.suffix = ""; }
       else if (type === "Add Date/Time") { step.dateSource = "current"; step.format = ""; step.tokenFormats = {}; }
       else if (type === "Add Photo Metadata") { step.format = ""; }
+      else if (type === "Add Audio Metadata") { step.format = ""; }
+      else if (type === "Add Video Metadata") { step.format = ""; }
+      else if (type === "Add/Replace Hash") { step.algorithm = "md5"; step.length = 8; step.position = "suffix"; step.separator = "_"; }
+      else if (type === "Add Sequence Number") { step.start = 1; step.stepVal = 1; step.padding = 3; step.position = "prefix"; step.separator = "_"; }
+      else if (type === "Renumber") { step.start = 1; step.stepVal = 1; step.padding = 0; }
+      else if (type === "Pad Number") { step.width = 3; }
+      else if (type === "Replace Spaces") { step.replaceWith = "_"; }
+      else if (type === "Sanitize") { step.replacement = "_"; }
       else if (type === "Convert Case") { step.applyTo = "name"; step.caseType = "lower"; }
     }
 
@@ -280,7 +296,17 @@
         container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
       } else if (step.type === "Remove Text") {
         container.appendChild(makeInput("Remove:", step, "remove", onChange));
+        container.appendChild(makeCheckbox("Match Case", step, "matchCase", onChange));
         container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
+      } else if (step.type === "Insert at Position") {
+        container.appendChild(makeInput("Text:", step, "text", onChange));
+        container.appendChild(makeInput("Position:", step, "position", onChange));
+        container.appendChild(makeCheckbox("From End", step, "fromEnd", onChange));
+      } else if (step.type === "Trim") {
+        container.appendChild(makeInput("Count:", step, "count", onChange));
+        container.appendChild(makeCheckbox("From End", step, "fromEnd", onChange));
+      } else if (step.type === "Swap") {
+        container.appendChild(makeInput("Delimiter:", step, "delimiter", onChange));
       } else if (step.type === "Add Prefix") {
         container.appendChild(makeInput("Prefix:", step, "prefix", onChange));
       } else if (step.type === "Add Suffix") {
@@ -289,6 +315,31 @@
         container.appendChild(makeDateTimeFields(step, onChange));
       } else if (step.type === "Add Photo Metadata") {
         container.appendChild(makePhotoMetaFields(step, onChange));
+      } else if (step.type === "Add Audio Metadata") {
+        container.appendChild(makeAudioMetaFields(step, onChange));
+      } else if (step.type === "Add Video Metadata") {
+        container.appendChild(makeVideoMetaFields(step, onChange));
+      } else if (step.type === "Add/Replace Hash") {
+        container.appendChild(makeSelect("Algorithm:", step, "algorithm", [["md5","MD5"],["sha1","SHA1"],["sha256","SHA256"]], onChange));
+        container.appendChild(makeInput("Length:", step, "length", onChange));
+        container.appendChild(makeSelect("Position:", step, "position", [["prefix","Prefix"],["suffix","Suffix"],["replace","Replace Name"]], onChange));
+        container.appendChild(makeInput("Separator:", step, "separator", onChange));
+      } else if (step.type === "Add Sequence Number") {
+        container.appendChild(makeInput("Start:", step, "start", onChange));
+        container.appendChild(makeInput("Step:", step, "stepVal", onChange));
+        container.appendChild(makeInput("Padding:", step, "padding", onChange));
+        container.appendChild(makeSelect("Position:", step, "position", [["prefix","Prefix"],["suffix","Suffix"]], onChange));
+        container.appendChild(makeInput("Separator:", step, "separator", onChange));
+      } else if (step.type === "Renumber") {
+        container.appendChild(makeInput("Start:", step, "start", onChange));
+        container.appendChild(makeInput("Step:", step, "stepVal", onChange));
+        container.appendChild(makeInput("Padding:", step, "padding", onChange));
+      } else if (step.type === "Pad Number") {
+        container.appendChild(makeInput("Width:", step, "width", onChange));
+      } else if (step.type === "Replace Spaces") {
+        container.appendChild(makeSelect("Replace With:", step, "replaceWith", [["_","Underscore (_)"],["-","Hyphen (-)"],["","Remove"]], onChange));
+      } else if (step.type === "Sanitize") {
+        container.appendChild(makeInput("Replace With:", step, "replacement", onChange));
       } else if (step.type === "Convert Case") {
         container.appendChild(makeApplyTo(step, onChange));
         container.appendChild(makeCaseButtons(step, onChange));
@@ -335,6 +386,22 @@
       lbl.appendChild(cb);
       lbl.append(" " + label);
       div.appendChild(lbl);
+      return div;
+    }
+
+    function makeSelect(label, step, key, options, onChange) {
+      const div = document.createElement("div");
+      div.className = "field-row";
+      div.innerHTML = `<label>${label}</label>`;
+      const sel = document.createElement("select");
+      options.forEach(([v, l]) => {
+        const opt = document.createElement("option");
+        opt.value = v; opt.textContent = l;
+        if (String(step[key]) === v) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change", () => { step[key] = sel.value; onChange(); });
+      div.appendChild(sel);
       return div;
     }
 
@@ -736,6 +803,242 @@
       } catch { return null; }
     }
 
+    // --- Add Audio Metadata Step ---
+    const AUDIO_TOKENS = [
+      { id: "Filename", label: "Filename" },
+      { id: "Title", label: "Title" },
+      { id: "Artist", label: "Artist" },
+      { id: "Album", label: "Album" },
+      { id: "Track", label: "Track" },
+      { id: "Year", label: "Year" },
+      { id: "Genre", label: "Genre" },
+    ];
+
+    function makeAudioMetaFields(step, onChange) {
+      return makeTokenFormatField(step, onChange, AUDIO_TOKENS);
+    }
+
+    function applyAudioMeta(step, name, ext, filePath) {
+      if (!filePath || !step.format) return [name, ext];
+      const meta = getID3Tags(filePath);
+      if (!meta) return [name, ext];
+      let result = step.format;
+      result = result.replace(/\{Filename\}/g, name);
+      result = result.replace(/\{Title\}/g, meta.title || "");
+      result = result.replace(/\{Artist\}/g, meta.artist || "");
+      result = result.replace(/\{Album\}/g, meta.album || "");
+      result = result.replace(/\{Track\}/g, meta.track || "");
+      result = result.replace(/\{Year\}/g, meta.year || "");
+      result = result.replace(/\{Genre\}/g, meta.genre || "");
+      return [result, ext];
+    }
+
+    function getID3Tags(filePath) {
+      try {
+        const buf = Buffer.alloc(256);
+        const fd = fs.openSync(filePath, "r");
+        const stat = fs.fstatSync(fd);
+        // Try ID3v1 (last 128 bytes)
+        if (stat.size >= 128) {
+          fs.readSync(fd, buf, 0, 128, stat.size - 128);
+          if (buf.slice(0, 3).toString() === "TAG") {
+            fs.closeSync(fd);
+            return {
+              title: buf.slice(3, 33).toString().replace(/\0/g, "").trim(),
+              artist: buf.slice(33, 63).toString().replace(/\0/g, "").trim(),
+              album: buf.slice(63, 93).toString().replace(/\0/g, "").trim(),
+              year: buf.slice(93, 97).toString().replace(/\0/g, "").trim(),
+              track: buf[126] ? String(buf[126]) : "",
+              genre: "",
+            };
+          }
+        }
+        // Try ID3v2
+        fs.readSync(fd, buf, 0, 10, 0);
+        if (buf.slice(0, 3).toString() === "ID3") {
+          const size = (buf[6] << 21) | (buf[7] << 14) | (buf[8] << 7) | buf[9];
+          const hdr = Buffer.alloc(Math.min(size, 4096));
+          fs.readSync(fd, hdr, 0, hdr.length, 10);
+          fs.closeSync(fd);
+          const tags = {};
+          let off = 0;
+          while (off < hdr.length - 10) {
+            const id = hdr.slice(off, off + 4).toString();
+            if (id[0] === "\0") break;
+            const fsize = hdr.readUInt32BE(off + 4);
+            if (fsize <= 0 || off + 10 + fsize > hdr.length) break;
+            const val = hdr.slice(off + 11, off + 10 + fsize).toString().replace(/\0/g, "").trim();
+            if (id === "TIT2") tags.title = val;
+            else if (id === "TPE1") tags.artist = val;
+            else if (id === "TALB") tags.album = val;
+            else if (id === "TRCK") tags.track = val;
+            else if (id === "TDRC" || id === "TYER") tags.year = val;
+            else if (id === "TCON") tags.genre = val;
+            off += 10 + fsize;
+          }
+          return Object.keys(tags).length ? tags : null;
+        }
+        fs.closeSync(fd);
+      } catch { return null; }
+      return null;
+    }
+
+    // --- Add Video Metadata Step ---
+    const VIDEO_TOKENS = [
+      { id: "Filename", label: "Filename" },
+      { id: "Width", label: "Width" },
+      { id: "Height", label: "Height" },
+      { id: "Duration", label: "Duration" },
+    ];
+
+    function makeVideoMetaFields(step, onChange) {
+      return makeTokenFormatField(step, onChange, VIDEO_TOKENS);
+    }
+
+    function applyVideoMeta(step, name, ext, filePath) {
+      if (!filePath || !step.format) return [name, ext];
+      const meta = getVideoMeta(filePath);
+      if (!meta) return [name, ext];
+      let result = step.format;
+      result = result.replace(/\{Filename\}/g, name);
+      result = result.replace(/\{Width\}/g, meta.width != null ? String(meta.width) : "");
+      result = result.replace(/\{Height\}/g, meta.height != null ? String(meta.height) : "");
+      result = result.replace(/\{Duration\}/g, meta.duration || "");
+      return [result, ext];
+    }
+
+    function getVideoMeta(filePath) {
+      // Parse MP4 moov/trak for basic dimensions and duration
+      try {
+        const fd = fs.openSync(filePath, "r");
+        const buf = Buffer.alloc(8);
+        fs.readSync(fd, buf, 0, 8, 0);
+        // Check for ftyp box
+        if (buf.slice(4, 8).toString() !== "ftyp") { fs.closeSync(fd); return null; }
+        // Scan for moov box
+        let offset = 0;
+        const stat = fs.fstatSync(fd);
+        while (offset < stat.size) {
+          fs.readSync(fd, buf, 0, 8, offset);
+          const size = buf.readUInt32BE(0);
+          const type = buf.slice(4, 8).toString();
+          if (size < 8) break;
+          if (type === "moov") {
+            const moov = Buffer.alloc(Math.min(size - 8, 65536));
+            fs.readSync(fd, moov, 0, moov.length, offset + 8);
+            fs.closeSync(fd);
+            return parseMoov(moov);
+          }
+          offset += size;
+        }
+        fs.closeSync(fd);
+      } catch { return null; }
+      return null;
+    }
+
+    function parseMoov(moov) {
+      let width = null, height = null, duration = null;
+      let off = 0;
+      while (off < moov.length - 8) {
+        const size = moov.readUInt32BE(off);
+        const type = moov.slice(off + 4, off + 8).toString();
+        if (size < 8 || off + size > moov.length) break;
+        if (type === "mvhd") {
+          const ver = moov[off + 8];
+          const ts = ver === 0 ? moov.readUInt32BE(off + 20) : moov.readUInt32BE(off + 28);
+          const dur = ver === 0 ? moov.readUInt32BE(off + 24) : moov.readUInt32BE(off + 32);
+          if (ts > 0) duration = String(Math.round(dur / ts)) + "s";
+        }
+        if (type === "tkhd") {
+          const ver = moov[off + 8];
+          const base = ver === 0 ? off + 84 : off + 96;
+          if (base + 4 <= off + size) {
+            const w = moov.readUInt32BE(base - 8) >> 16;
+            const h = moov.readUInt32BE(base - 4) >> 16;
+            if (w > 0 && h > 0) { width = w; height = h; }
+          }
+        }
+        off += size;
+      }
+      if (width || duration) return { width, height, duration };
+      return null;
+    }
+
+    // --- Add/Replace Hash ---
+    function applyHash(step, name, ext, filePath) {
+      if (!filePath) return [name, ext];
+      try {
+        const content = fs.readFileSync(filePath);
+        const hash = nodeCrypto.createHash(step.algorithm || "md5").update(content).digest("hex").slice(0, parseInt(step.length) || 8);
+        const sep = step.separator || "";
+        if (step.position === "replace") return [hash, ext];
+        if (step.position === "prefix") return [hash + sep + name, ext];
+        return [name + sep + hash, ext];
+      } catch { return [name, ext]; }
+    }
+
+    // --- Generic token format field builder (reused by Audio/Video) ---
+    function makeTokenFormatField(step, onChange, tokens) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "datetime-fields";
+
+      const fmtRow = document.createElement("div");
+      fmtRow.className = "field-col";
+      fmtRow.innerHTML = `<label>Format:</label>`;
+      const fmtInput = document.createElement("textarea");
+      fmtInput.className = "format-textarea";
+      fmtInput.rows = 4;
+      fmtInput.value = step.format || "";
+      fmtInput.addEventListener("click", (e) => {
+        const pos = fmtInput.selectionStart;
+        const val = fmtInput.value;
+        let start = -1;
+        for (let i = pos; i >= 0; i--) { if (val[i] === "{") { start = i; break; } if (val[i] === "}" && i < pos) break; }
+        if (start < 0) return;
+        const end = val.indexOf("}", start);
+        if (end < 0 || pos > end) return;
+        e.preventDefault();
+        fmtInput.setSelectionRange(start, end + 1);
+      });
+      const hist = [step.format || ""];
+      let histIdx = 0;
+      const pushHist = () => { hist.splice(histIdx + 1); hist.push(fmtInput.value); histIdx = hist.length - 1; };
+      fmtInput.addEventListener("keydown", (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); if (histIdx > 0) { histIdx--; fmtInput.value = hist[histIdx]; step.format = fmtInput.value; onChange(); } return; }
+        if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.shiftKey && (e.key === "z" || e.key === "Z")))) { e.preventDefault(); if (histIdx < hist.length - 1) { histIdx++; fmtInput.value = hist[histIdx]; step.format = fmtInput.value; onChange(); } return; }
+        if (e.key === "Backspace") {
+          const s = fmtInput.selectionStart, en = fmtInput.selectionEnd, val = fmtInput.value;
+          if (s !== en) { setTimeout(() => { step.format = fmtInput.value; pushHist(); onChange(); }, 0); return; }
+          if (s > 0 && val[s - 1] === "}") { const st = val.lastIndexOf("{", s - 1); if (st >= 0) { e.preventDefault(); fmtInput.value = val.slice(0, st) + val.slice(s); fmtInput.setSelectionRange(st, st); step.format = fmtInput.value; pushHist(); onChange(); } }
+        }
+      });
+      fmtInput.addEventListener("input", () => { step.format = fmtInput.value; pushHist(); onChange(); });
+      fmtInput.addEventListener("dragover", (e) => e.preventDefault());
+      fmtInput.addEventListener("drop", (e) => { e.preventDefault(); const token = e.dataTransfer.getData("text/plain"); if (!token) return; const pos = fmtInput.selectionStart || fmtInput.value.length; fmtInput.value = fmtInput.value.slice(0, pos) + token + fmtInput.value.slice(pos); step.format = fmtInput.value; pushHist(); onChange(); });
+      fmtRow.appendChild(fmtInput);
+      wrapper.appendChild(fmtRow);
+
+      const palLabel = document.createElement("div");
+      palLabel.className = "token-palette-label";
+      palLabel.textContent = "Drag elements to format field";
+      wrapper.appendChild(palLabel);
+
+      const palette = document.createElement("div");
+      palette.className = "token-palette";
+      const stepHL = load().stepHighlightColor || config.stepHighlightColor || "#0a84ff";
+      tokens.forEach(tok => {
+        const btn = document.createElement("span");
+        btn.className = "token-btn";
+        btn.textContent = tok.label;
+        btn.draggable = true;
+        btn.addEventListener("dragstart", (e) => { e.stopPropagation(); btn.style.background = stepHL; e.dataTransfer.setData("text/plain", "{" + tok.id + "}"); });
+        btn.addEventListener("dragend", () => { btn.style.background = ""; });
+        palette.appendChild(btn);
+      });
+      wrapper.appendChild(palette);
+      return wrapper;
+    }
+
     // Handle token format menu selection from main process
     ipcRenderer.on("token-format-selected", (_e, { tokId, fmt }) => {
       const script = scripts[selectedScriptIdx];
@@ -782,7 +1085,7 @@
     });
 
     // --- Rename Engine ---
-    function applyScript(filename, filePath) {
+    function applyScript(filename, filePath, fileIndex) {
       const script = scripts[selectedScriptIdx];
       if (!script) return filename;
       let dotIdx = filename.lastIndexOf(".");
@@ -790,12 +1093,12 @@
       let ext = dotIdx > 0 ? filename.slice(dotIdx + 1) : "";
 
       for (const step of script.steps) {
-        [name, ext] = applyStep(step, name, ext, filePath);
+        [name, ext] = applyStep(step, name, ext, filePath, fileIndex);
       }
       return ext ? name + "." + ext : name;
     }
 
-    function applyStep(step, name, ext, filePath) {
+    function applyStep(step, name, ext, filePath, fileIndex) {
       if (step.type === "Find & Replace") {
         const target = getTarget(step.applyTo, name, ext);
         const result = doReplace(target, step.find, step.replace, step.matchCase, step.firstOnly);
@@ -805,20 +1108,60 @@
         const result = doRegex(target, step.pattern, step.replace, step.matchCase, step.firstOnly);
         return setTarget(step.applyTo, name, ext, result);
       } else if (step.type === "Remove Text") {
-        const target = name + (ext ? "." + ext : "");
-        let n = name, e = ext;
-        // Remove applies to full filename
-        const result = doReplace(n, step.remove, "", false, step.firstOnly);
+        const result = doReplace(name, step.remove, "", step.matchCase, step.firstOnly);
         return [result, ext];
+      } else if (step.type === "Insert at Position") {
+        const pos = parseInt(step.position) || 0;
+        const idx = step.fromEnd ? Math.max(0, name.length - pos) : Math.min(pos, name.length);
+        return [name.slice(0, idx) + (step.text || "") + name.slice(idx), ext];
+      } else if (step.type === "Trim") {
+        const count = parseInt(step.count) || 0;
+        if (step.fromEnd) return [name.slice(0, Math.max(0, name.length - count)), ext];
+        return [name.slice(count), ext];
+      } else if (step.type === "Swap") {
+        const delim = step.delimiter || " - ";
+        const idx = name.indexOf(delim);
+        if (idx < 0) return [name, ext];
+        return [name.slice(idx + delim.length) + delim + name.slice(0, idx), ext];
       } else if (step.type === "Add Prefix") {
         return [step.prefix + name, ext];
       } else if (step.type === "Add Suffix") {
         return [name + step.suffix, ext];
       } else if (step.type === "Add Date/Time") {
-        const result = applyDateTime(step, name, ext, filePath);
-        return result;
+        return applyDateTime(step, name, ext, filePath);
       } else if (step.type === "Add Photo Metadata") {
         return applyPhotoMeta(step, name, ext, filePath);
+      } else if (step.type === "Add Audio Metadata") {
+        return applyAudioMeta(step, name, ext, filePath);
+      } else if (step.type === "Add Video Metadata") {
+        return applyVideoMeta(step, name, ext, filePath);
+      } else if (step.type === "Add/Replace Hash") {
+        return applyHash(step, name, ext, filePath);
+      } else if (step.type === "Add Sequence Number") {
+        const num = String((parseInt(step.start) || 1) + fileIndex * (parseInt(step.stepVal) || 1)).padStart(parseInt(step.padding) || 0, "0");
+        const sep = step.separator || "";
+        if (step.position === "suffix") return [name + sep + num, ext];
+        return [num + sep + name, ext];
+      } else if (step.type === "Renumber") {
+        const start = parseInt(step.start) || 1;
+        const stepV = parseInt(step.stepVal) || 1;
+        const pad = parseInt(step.padding) || 0;
+        let idx = 0;
+        const result = name.replace(/\d+/g, () => {
+          const num = String(start + idx * stepV).padStart(pad, "0");
+          idx++;
+          return num;
+        });
+        return [result, ext];
+      } else if (step.type === "Pad Number") {
+        const width = parseInt(step.width) || 3;
+        const result = name.replace(/\d+/g, m => m.padStart(width, "0"));
+        return [result, ext];
+      } else if (step.type === "Replace Spaces") {
+        return [name.replace(/ /g, step.replaceWith || ""), ext];
+      } else if (step.type === "Sanitize") {
+        const repl = step.replacement || "_";
+        return [name.replace(/[<>:"/\\|?*\x00-\x1f]/g, repl), ext];
       } else if (step.type === "Convert Case") {
         const target = getTarget(step.applyTo, name, ext);
         const result = convertCase(target, step.caseType);
@@ -1051,7 +1394,7 @@
       const selColor = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
 
       // Compute new names
-      files.forEach(f => { f.newName = applyScript(f.name, f.path); });
+      files.forEach((f, idx) => { f.newName = applyScript(f.name, f.path, idx); });
 
       // Sort
       const sorted = [...files];
