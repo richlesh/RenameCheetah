@@ -2,5 +2,7 @@
   "autosaveIntervalSeconds": 120,
   "rowColorEven": "#000000",
   "rowColorOdd": "#1a1a1a",
-  "selectionColor": "#2e7d32"
+  "scriptHighlightColor": "#2e7d32",
+  "stepHighlightColor": "#2e7d32",
+  "fileHighlightColor": "#2e7d32"
 }

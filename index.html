@@ -76,6 +76,13 @@
       const settings = load();
       scripts = settings.scripts || [];
       if (scripts.length > 0) selectedScriptIdx = 0;
+      // Set highlight color CSS variables on panels
+      const scriptHL = settings.scriptHighlightColor || config.scriptHighlightColor || "#0a84ff";
+      const stepHL = settings.stepHighlightColor || config.stepHighlightColor || "#0a84ff";
+      const fileHL = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
+      document.getElementById("left-panel").style.setProperty("--panel-hl", scriptHL);
+      document.getElementById("middle-panel").style.setProperty("--panel-hl", stepHL);
+      document.getElementById("right-panel").style.setProperty("--panel-hl", fileHL);
       renderScripts();
       renderSteps();
       updatePreview();
@@ -101,9 +108,11 @@
     function renderScripts() {
       const list = document.getElementById("scripts-list");
       list.innerHTML = "";
+      const scriptHL = load().scriptHighlightColor || config.scriptHighlightColor || "#0a84ff";
       scripts.forEach((s, i) => {
         const div = document.createElement("div");
         div.className = "script-item" + (i === selectedScriptIdx ? " selected" : "");
+        if (i === selectedScriptIdx) div.style.background = scriptHL;
 
         const span = document.createElement("span");
         span.className = "script-name";
@@ -174,17 +183,29 @@
     function renderSteps() {
       const list = document.getElementById("steps-list");
       list.innerHTML = "";
+      const stepHL = load().stepHighlightColor || config.stepHighlightColor || "#0a84ff";
       const script = scripts[selectedScriptIdx];
       if (!script) return;
       script.steps.forEach((step, i) => {
         const div = document.createElement("div");
         div.className = "step-card" + (i === selectedStepIdx ? " selected" : "");
+        if (i === selectedStepIdx) { div.style.borderColor = stepHL; }
+        div.style.setProperty("--step-hl", stepHL);
         div.draggable = true;
         div.dataset.idx = i;
         div.addEventListener("mousedown", (e) => {
-          if (e.target.closest("select, input, button")) return;
-          selectedStepIdx = i;
-          renderSteps();
+          if (i === selectedStepIdx && e.target.closest("select, input, button, textarea")) return;
+          if (i !== selectedStepIdx) {
+            const targetTag = e.target.tagName;
+            const fieldIdx = [...div.querySelectorAll("select, input, textarea")].indexOf(e.target.closest("select, input, textarea"));
+            selectedStepIdx = i;
+            renderSteps();
+            if (fieldIdx >= 0) {
+              const newCard = document.getElementById("steps-list").children[i];
+              const fields = newCard?.querySelectorAll("select, input, textarea");
+              if (fields && fields[fieldIdx]) fields[fieldIdx].focus();
+            }
+          }
         });
         div.addEventListener("dragstart", (e) => { dragSrcIdx = i; e.dataTransfer.effectAllowed = "move"; });
         div.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; div.classList.add("drag-over"); });
@@ -204,7 +225,7 @@
         // Type selector
         const select = document.createElement("select");
         select.className = "step-type-select";
-        ["Find & Replace", "Remove Text", "Add Prefix", "Add Suffix", "Convert Case"].forEach(t => {
+        ["Find & Replace", "Regular Expression", "Remove Text", "Add Prefix", "Add Suffix", "Add Date/Time", "Add Photo Metadata", "Convert Case"].forEach(t => {
           const opt = document.createElement("option");
           opt.value = t;
           opt.textContent = t;
@@ -233,9 +254,12 @@
       const type = step.type;
       Object.keys(step).forEach(k => { if (k !== "type") delete step[k]; });
       if (type === "Find & Replace") { step.applyTo = "name"; step.find = ""; step.replace = ""; step.matchCase = false; step.firstOnly = false; }
+      else if (type === "Regular Expression") { step.applyTo = "name"; step.pattern = ""; step.replace = ""; step.matchCase = false; step.firstOnly = false; }
       else if (type === "Remove Text") { step.remove = ""; step.firstOnly = false; }
       else if (type === "Add Prefix") { step.prefix = ""; }
       else if (type === "Add Suffix") { step.suffix = ""; }
+      else if (type === "Add Date/Time") { step.dateSource = "current"; step.format = ""; step.tokenFormats = {}; }
+      else if (type === "Add Photo Metadata") { step.format = ""; }
       else if (type === "Convert Case") { step.applyTo = "name"; step.caseType = "lower"; }
     }
 
@@ -248,6 +272,12 @@
         container.appendChild(makeInput("Replace:", step, "replace", onChange));
         container.appendChild(makeCheckbox("Match Case", step, "matchCase", onChange));
         container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
+      } else if (step.type === "Regular Expression") {
+        container.appendChild(makeApplyTo(step, onChange));
+        container.appendChild(makeInput("Pattern:", step, "pattern", onChange));
+        container.appendChild(makeInput("Replace:", step, "replace", onChange));
+        container.appendChild(makeCheckbox("Match Case", step, "matchCase", onChange));
+        container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
       } else if (step.type === "Remove Text") {
         container.appendChild(makeInput("Remove:", step, "remove", onChange));
         container.appendChild(makeCheckbox("First Match Only", step, "firstOnly", onChange));
@@ -255,6 +285,10 @@
         container.appendChild(makeInput("Prefix:", step, "prefix", onChange));
       } else if (step.type === "Add Suffix") {
         container.appendChild(makeInput("Suffix:", step, "suffix", onChange));
+      } else if (step.type === "Add Date/Time") {
+        container.appendChild(makeDateTimeFields(step, onChange));
+      } else if (step.type === "Add Photo Metadata") {
+        container.appendChild(makePhotoMetaFields(step, onChange));
       } else if (step.type === "Convert Case") {
         container.appendChild(makeApplyTo(step, onChange));
         container.appendChild(makeCaseButtons(step, onChange));
@@ -318,6 +352,416 @@
       return div;
     }
 
+    // --- Add Date/Time Step ---
+    const DATE_TOKENS = [
+      { id: "Filename", label: "Filename", formats: null },
+      { id: "Year", label: "Year", formats: ["YY", "YYYY"] },
+      { id: "Month", label: "Month", formats: ["M", "MM", "MMM", "Month"] },
+      { id: "Day", label: "Day", formats: ["D", "DD"] },
+      { id: "Hour", label: "Hour", formats: ["0", "00", "1", "11"] },
+      { id: "Minute", label: "Minute", formats: ["M", "MM"] },
+      { id: "Second", label: "Second", formats: ["S", "SS"] },
+      { id: "AMPM", label: "AM/PM", formats: null },
+    ];
+
+    function makeDateTimeFields(step, onChange) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "datetime-fields";
+
+      // Date source selector
+      const srcRow = document.createElement("div");
+      srcRow.className = "field-row";
+      srcRow.innerHTML = `<label>Date/Time:</label>`;
+      const srcSel = document.createElement("select");
+      [["current", "Current"], ["created", "File Created"], ["modified", "File Last Modified"], ["exifOriginal", "EXIF Date/Time Original"], ["exifDigitized", "EXIF Date/Time Digitized"]].forEach(([v, l]) => {
+        const opt = document.createElement("option");
+        opt.value = v; opt.textContent = l;
+        if (step.dateSource === v) opt.selected = true;
+        srcSel.appendChild(opt);
+      });
+      srcSel.addEventListener("change", () => { step.dateSource = srcSel.value; onChange(); });
+      srcRow.appendChild(srcSel);
+      wrapper.appendChild(srcRow);
+
+      // Format field
+      const fmtRow = document.createElement("div");
+      fmtRow.className = "field-col";
+      fmtRow.innerHTML = `<label>Format:</label>`;
+      const fmtInput = document.createElement("textarea");
+      fmtInput.className = "format-textarea";
+      fmtInput.rows = 4;
+      fmtInput.value = step.format || "";
+
+      // Helper: find token boundaries at a position
+      function findTokenAt(val, pos) {
+        let start = -1, end = -1;
+        for (let i = pos; i >= 0; i--) { if (val[i] === "{") { start = i; break; } if (val[i] === "}" && i < pos) break; }
+        if (start < 0) return null;
+        end = val.indexOf("}", start);
+        if (end < 0 || pos > end) return null;
+        return { start, end: end + 1, text: val.slice(start, end + 1) };
+      }
+
+      function getTokenId(tokenText) {
+        const m = tokenText.match(/^\{(\w+)/);
+        return m ? m[1] : null;
+      }
+
+      // Single click: select whole token if inside one
+      fmtInput.addEventListener("click", (e) => {
+        const pos = fmtInput.selectionStart;
+        const tok = findTokenAt(fmtInput.value, pos);
+        if (tok) {
+          e.preventDefault();
+          fmtInput.setSelectionRange(tok.start, tok.end);
+        }
+      });
+
+      // Right-click: show format options for token
+      fmtInput.addEventListener("contextmenu", (e) => {
+        const pos = fmtInput.selectionStart;
+        const val = fmtInput.value;
+        const tok = findTokenAt(val, pos);
+        if (!tok) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const tokId = getTokenId(tok.text);
+        const tokDef = DATE_TOKENS.find(t => t.id === tokId);
+        if (!tokDef || !tokDef.formats) return;
+        // Extract format from this specific token instance
+        const fmtMatch = tok.text.match(/^\{\w+:([^}]*)\}$/);
+        const currentFmt = fmtMatch ? fmtMatch[1] : (tokDef.formats[tokDef.formats.length > 1 ? 1 : 0]);
+        const items = tokDef.formats.map(f => ({ label: f, tokId, fmt: f, checked: f === currentFmt }));
+        ipcRenderer.invoke("show-token-format-menu-v2", items, tok.start, tok.end);
+      });
+
+      // Undo/redo history
+      const fmtHistory = [step.format || ""];
+      let fmtHistoryIdx = 0;
+      const fmtPush = () => {
+        fmtHistory.splice(fmtHistoryIdx + 1);
+        fmtHistory.push(fmtInput.value);
+        fmtHistoryIdx = fmtHistory.length - 1;
+      };
+
+      fmtInput.addEventListener("keydown", (e) => {
+        // Undo
+        if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          if (fmtHistoryIdx > 0) {
+            fmtHistoryIdx--;
+            fmtInput.value = fmtHistory[fmtHistoryIdx];
+            step.format = fmtInput.value;
+            onChange();
+          }
+          return;
+        }
+        // Redo
+        if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.shiftKey && e.key === "z") || (e.shiftKey && e.key === "Z"))) {
+          e.preventDefault();
+          if (fmtHistoryIdx < fmtHistory.length - 1) {
+            fmtHistoryIdx++;
+            fmtInput.value = fmtHistory[fmtHistoryIdx];
+            step.format = fmtInput.value;
+            onChange();
+          }
+          return;
+        }
+        if (e.key === "Backspace") {
+          const selStart = fmtInput.selectionStart;
+          const selEnd = fmtInput.selectionEnd;
+          const val = fmtInput.value;
+          if (selStart !== selEnd) {
+            setTimeout(() => { step.format = fmtInput.value; fmtPush(); onChange(); }, 0);
+            return;
+          }
+          if (selStart > 0 && val[selStart - 1] === "}") {
+            const start = val.lastIndexOf("{", selStart - 1);
+            if (start >= 0) {
+              e.preventDefault();
+              fmtInput.value = val.slice(0, start) + val.slice(selStart);
+              fmtInput.setSelectionRange(start, start);
+              step.format = fmtInput.value;
+              fmtPush();
+              onChange();
+            }
+          }
+        }
+      });
+      fmtInput.addEventListener("input", () => { step.format = fmtInput.value; fmtPush(); onChange(); });
+      fmtInput.addEventListener("dragover", (e) => e.preventDefault());
+      fmtInput.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const token = e.dataTransfer.getData("text/plain");
+        if (!token) return;
+        const pos = fmtInput.selectionStart || fmtInput.value.length;
+        fmtInput.value = fmtInput.value.slice(0, pos) + token + fmtInput.value.slice(pos);
+        step.format = fmtInput.value;
+        fmtPush();
+        onChange();
+      });
+      fmtRow.appendChild(fmtInput);
+      wrapper.appendChild(fmtRow);
+
+      // Token palette
+      const palLabel = document.createElement("div");
+      palLabel.className = "token-palette-label";
+      palLabel.textContent = "Drag elements to format field";
+      wrapper.appendChild(palLabel);
+
+      const palette = document.createElement("div");
+      palette.className = "token-palette";
+      const stepHL = load().stepHighlightColor || config.stepHighlightColor || "#0a84ff";
+
+      DATE_TOKENS.forEach(tok => {
+        const btn = document.createElement("span");
+        btn.className = "token-btn";
+        const fmt = (step.tokenFormats && step.tokenFormats[tok.id]) || (tok.formats ? tok.formats[tok.formats.length > 1 ? 1 : 0] : null);
+        btn.textContent = tok.label;
+        btn.draggable = true;
+        btn.addEventListener("dragstart", (e) => {
+          e.stopPropagation();
+          btn.style.background = stepHL;
+          const tokenStr = "{" + tok.id + (fmt && tok.formats ? ":" + fmt : "") + "}";
+          e.dataTransfer.setData("text/plain", tokenStr);
+        });
+        btn.addEventListener("dragend", () => { btn.style.background = ""; });
+
+        palette.appendChild(btn);
+      });
+      wrapper.appendChild(palette);
+      return wrapper;
+    }
+
+    // --- Add Photo Metadata Step ---
+    const PHOTO_TOKENS = [
+      { id: "Filename", label: "Filename" },
+      { id: "Width", label: "Width" },
+      { id: "Height", label: "Height" },
+      { id: "DPIWidth", label: "DPI Width" },
+      { id: "DPIHeight", label: "DPI Height" },
+      { id: "Longitude", label: "Longitude" },
+      { id: "Latitude", label: "Latitude" },
+      { id: "Altitude", label: "Altitude" },
+    ];
+
+    function makePhotoMetaFields(step, onChange) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "datetime-fields";
+
+      // Format field
+      const fmtRow = document.createElement("div");
+      fmtRow.className = "field-col";
+      fmtRow.innerHTML = `<label>Format:</label>`;
+      const fmtInput = document.createElement("textarea");
+      fmtInput.className = "format-textarea";
+      fmtInput.rows = 4;
+      fmtInput.value = step.format || "";
+
+      // Click selects token
+      fmtInput.addEventListener("click", (e) => {
+        const pos = fmtInput.selectionStart;
+        const val = fmtInput.value;
+        let start = -1;
+        for (let i = pos; i >= 0; i--) { if (val[i] === "{") { start = i; break; } if (val[i] === "}" && i < pos) break; }
+        if (start < 0) return;
+        const end = val.indexOf("}", start);
+        if (end < 0 || pos > end) return;
+        e.preventDefault();
+        fmtInput.setSelectionRange(start, end + 1);
+      });
+
+      // Undo history
+      const hist = [step.format || ""];
+      let histIdx = 0;
+      const pushHist = () => { hist.splice(histIdx + 1); hist.push(fmtInput.value); histIdx = hist.length - 1; };
+
+      fmtInput.addEventListener("keydown", (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          if (histIdx > 0) { histIdx--; fmtInput.value = hist[histIdx]; step.format = fmtInput.value; onChange(); }
+          return;
+        }
+        if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.shiftKey && (e.key === "z" || e.key === "Z")))) {
+          e.preventDefault();
+          if (histIdx < hist.length - 1) { histIdx++; fmtInput.value = hist[histIdx]; step.format = fmtInput.value; onChange(); }
+          return;
+        }
+        if (e.key === "Backspace") {
+          const s = fmtInput.selectionStart, en = fmtInput.selectionEnd, val = fmtInput.value;
+          if (s !== en) { setTimeout(() => { step.format = fmtInput.value; pushHist(); onChange(); }, 0); return; }
+          if (s > 0 && val[s - 1] === "}") {
+            const st = val.lastIndexOf("{", s - 1);
+            if (st >= 0) { e.preventDefault(); fmtInput.value = val.slice(0, st) + val.slice(s); fmtInput.setSelectionRange(st, st); step.format = fmtInput.value; pushHist(); onChange(); }
+          }
+        }
+      });
+      fmtInput.addEventListener("input", () => { step.format = fmtInput.value; pushHist(); onChange(); });
+      fmtInput.addEventListener("dragover", (e) => e.preventDefault());
+      fmtInput.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const token = e.dataTransfer.getData("text/plain");
+        if (!token) return;
+        const pos = fmtInput.selectionStart || fmtInput.value.length;
+        fmtInput.value = fmtInput.value.slice(0, pos) + token + fmtInput.value.slice(pos);
+        step.format = fmtInput.value;
+        pushHist();
+        onChange();
+      });
+      fmtRow.appendChild(fmtInput);
+      wrapper.appendChild(fmtRow);
+
+      // Token palette
+      const palLabel = document.createElement("div");
+      palLabel.className = "token-palette-label";
+      palLabel.textContent = "Drag elements to format field";
+      wrapper.appendChild(palLabel);
+
+      const palette = document.createElement("div");
+      palette.className = "token-palette";
+      const stepHL = load().stepHighlightColor || config.stepHighlightColor || "#0a84ff";
+      PHOTO_TOKENS.forEach(tok => {
+        const btn = document.createElement("span");
+        btn.className = "token-btn";
+        btn.textContent = tok.label;
+        btn.draggable = true;
+        btn.addEventListener("dragstart", (e) => {
+          e.stopPropagation();
+          btn.style.background = stepHL;
+          e.dataTransfer.setData("text/plain", "{" + tok.id + "}");
+        });
+        btn.addEventListener("dragend", () => { btn.style.background = ""; });
+        palette.appendChild(btn);
+      });
+      wrapper.appendChild(palette);
+      return wrapper;
+    }
+
+    function applyPhotoMeta(step, name, ext, filePath) {
+      if (!filePath || !step.format) return [name, ext];
+      const meta = getPhotoMetadata(filePath);
+      if (!meta) return [name, ext];
+      let result = step.format;
+      result = result.replace(/\{Filename\}/g, name);
+      result = result.replace(/\{Width\}/g, meta.width != null ? String(meta.width) : "");
+      result = result.replace(/\{Height\}/g, meta.height != null ? String(meta.height) : "");
+      result = result.replace(/\{DPIWidth\}/g, meta.dpiWidth != null ? String(meta.dpiWidth) : "");
+      result = result.replace(/\{DPIHeight\}/g, meta.dpiHeight != null ? String(meta.dpiHeight) : "");
+      result = result.replace(/\{Longitude\}/g, meta.longitude != null ? meta.longitude.toFixed(6) : "");
+      result = result.replace(/\{Latitude\}/g, meta.latitude != null ? meta.latitude.toFixed(6) : "");
+      result = result.replace(/\{Altitude\}/g, meta.altitude != null ? meta.altitude.toFixed(1) : "");
+      return [result, ext];
+    }
+
+    function getPhotoMetadata(filePath) {
+      try {
+        const buf = Buffer.alloc(65536);
+        const fd = fs.openSync(filePath, "r");
+        const bytesRead = fs.readSync(fd, buf, 0, 65536, 0);
+        fs.closeSync(fd);
+        if (bytesRead < 12 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+        let offset = 2;
+        while (offset < bytesRead - 4) {
+          if (buf[offset] !== 0xFF) return null;
+          const marker = buf[offset + 1];
+          const len = buf.readUInt16BE(offset + 2);
+          if (marker === 0xE1) {
+            const exif = buf.slice(offset + 4, offset + 2 + len);
+            if (exif.slice(0, 4).toString() !== "Exif") return null;
+            return parsePhotoExif(exif.slice(6));
+          }
+          offset += 2 + len;
+        }
+      } catch { return null; }
+      return null;
+    }
+
+    function parsePhotoExif(tiff) {
+      try {
+        const le = tiff.readUInt16BE(0) === 0x4949;
+        const r16 = (o) => le ? tiff.readUInt16LE(o) : tiff.readUInt16BE(o);
+        const r32 = (o) => le ? tiff.readUInt32LE(o) : tiff.readUInt32BE(o);
+        const rational = (o) => r32(o) / r32(o + 4);
+
+        let ifdOff = r32(4);
+        let count = r16(ifdOff);
+        let exifIfdOff = 0, gpsIfdOff = 0;
+        let width = null, height = null;
+        let dpiWidth = null, dpiHeight = null;
+
+        // IFD0
+        for (let i = 0; i < count; i++) {
+          const entry = ifdOff + 2 + i * 12;
+          const tag = r16(entry);
+          if (tag === 0x8769) exifIfdOff = r32(entry + 8);
+          if (tag === 0x8825) gpsIfdOff = r32(entry + 8);
+          if (tag === 0xA002) width = r32(entry + 8);
+          if (tag === 0xA003) height = r32(entry + 8);
+          if (tag === 0x011A) dpiWidth = Math.round(rational(r32(entry + 8)));
+          if (tag === 0x011B) dpiHeight = Math.round(rational(r32(entry + 8)));
+        }
+
+        // ExifIFD for dimensions
+        if (exifIfdOff) {
+          count = r16(exifIfdOff);
+          for (let i = 0; i < count; i++) {
+            const entry = exifIfdOff + 2 + i * 12;
+            const tag = r16(entry);
+            if (tag === 0xA002) width = r32(entry + 8);
+            if (tag === 0xA003) height = r32(entry + 8);
+          }
+        }
+
+        // GPS IFD
+        let latitude = null, longitude = null, altitude = null;
+        if (gpsIfdOff) {
+          count = r16(gpsIfdOff);
+          let latRef = "N", lonRef = "E";
+          let latVals = null, lonVals = null;
+          for (let i = 0; i < count; i++) {
+            const entry = gpsIfdOff + 2 + i * 12;
+            const tag = r16(entry);
+            const valOff = r32(entry + 8);
+            if (tag === 1) latRef = String.fromCharCode(tiff[entry + 8]);
+            if (tag === 2) latVals = [rational(valOff), rational(valOff + 8), rational(valOff + 16)];
+            if (tag === 3) lonRef = String.fromCharCode(tiff[entry + 8]);
+            if (tag === 4) lonVals = [rational(valOff), rational(valOff + 8), rational(valOff + 16)];
+            if (tag === 6) altitude = rational(valOff);
+          }
+          if (latVals) latitude = (latVals[0] + latVals[1] / 60 + latVals[2] / 3600) * (latRef === "S" ? -1 : 1);
+          if (lonVals) longitude = (lonVals[0] + lonVals[1] / 60 + lonVals[2] / 3600) * (lonRef === "W" ? -1 : 1);
+        }
+
+        return { width, height, dpiWidth, dpiHeight, latitude, longitude, altitude };
+      } catch { return null; }
+    }
+
+    // Handle token format menu selection from main process
+    ipcRenderer.on("token-format-selected", (_e, { tokId, fmt }) => {
+      const script = scripts[selectedScriptIdx];
+      if (!script || selectedStepIdx < 0) return;
+      const step = script.steps[selectedStepIdx];
+      if (!step || step.type !== "Add Date/Time") return;
+      if (!step.tokenFormats) step.tokenFormats = {};
+      step.tokenFormats[tokId] = fmt;
+      const re = new RegExp("\\{" + tokId + "(:[^}]*)?\\}", "g");
+      step.format = (step.format || "").replace(re, "{" + tokId + ":" + fmt + "}");
+      updatePreview();
+      renderSteps();
+    });
+
+    ipcRenderer.on("token-format-update", (_e, { tokId, fmt, tokStart, tokEnd }) => {
+      const script = scripts[selectedScriptIdx];
+      if (!script || selectedStepIdx < 0) return;
+      const step = script.steps[selectedStepIdx];
+      if (!step || step.type !== "Add Date/Time") return;
+      // Replace only the specific token at the known position
+      const newToken = "{" + tokId + ":" + fmt + "}";
+      step.format = step.format.slice(0, tokStart) + newToken + step.format.slice(tokEnd);
+      updatePreview();
+      renderSteps();
+    });
+
     document.getElementById("add-step").addEventListener("click", () => {
       const script = scripts[selectedScriptIdx];
       if (!script) return;
@@ -338,7 +782,7 @@
     });
 
     // --- Rename Engine ---
-    function applyScript(filename) {
+    function applyScript(filename, filePath) {
       const script = scripts[selectedScriptIdx];
       if (!script) return filename;
       let dotIdx = filename.lastIndexOf(".");
@@ -346,15 +790,19 @@
       let ext = dotIdx > 0 ? filename.slice(dotIdx + 1) : "";
 
       for (const step of script.steps) {
-        [name, ext] = applyStep(step, name, ext);
+        [name, ext] = applyStep(step, name, ext, filePath);
       }
       return ext ? name + "." + ext : name;
     }
 
-    function applyStep(step, name, ext) {
+    function applyStep(step, name, ext, filePath) {
       if (step.type === "Find & Replace") {
         const target = getTarget(step.applyTo, name, ext);
         const result = doReplace(target, step.find, step.replace, step.matchCase, step.firstOnly);
+        return setTarget(step.applyTo, name, ext, result);
+      } else if (step.type === "Regular Expression") {
+        const target = getTarget(step.applyTo, name, ext);
+        const result = doRegex(target, step.pattern, step.replace, step.matchCase, step.firstOnly);
         return setTarget(step.applyTo, name, ext, result);
       } else if (step.type === "Remove Text") {
         const target = name + (ext ? "." + ext : "");
@@ -366,6 +814,11 @@
         return [step.prefix + name, ext];
       } else if (step.type === "Add Suffix") {
         return [name + step.suffix, ext];
+      } else if (step.type === "Add Date/Time") {
+        const result = applyDateTime(step, name, ext, filePath);
+        return result;
+      } else if (step.type === "Add Photo Metadata") {
+        return applyPhotoMeta(step, name, ext, filePath);
       } else if (step.type === "Convert Case") {
         const target = getTarget(step.applyTo, name, ext);
         const result = convertCase(target, step.caseType);
@@ -393,6 +846,131 @@
       const flags = (matchCase ? "" : "i") + (firstOnly ? "" : "g");
       const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return str.replace(new RegExp(escaped, flags), replace);
+    }
+
+    function doRegex(str, pattern, replace, matchCase, firstOnly) {
+      if (!pattern) return str;
+      try {
+        const flags = (matchCase ? "" : "i") + (firstOnly ? "" : "g");
+        return str.replace(new RegExp(pattern, flags), replace);
+      } catch { return str; }
+    }
+
+    function getExifDate(filePath, source) {
+      if (!filePath) return null;
+      try {
+        const buf = Buffer.alloc(65536);
+        const fd = fs.openSync(filePath, "r");
+        const bytesRead = fs.readSync(fd, buf, 0, 65536, 0);
+        fs.closeSync(fd);
+        if (bytesRead < 12) return null;
+        // Check JPEG SOI + APP1
+        if (buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+        let offset = 2;
+        while (offset < bytesRead - 4) {
+          if (buf[offset] !== 0xFF) return null;
+          const marker = buf[offset + 1];
+          const len = buf.readUInt16BE(offset + 2);
+          if (marker === 0xE1) { // APP1
+            const exif = buf.slice(offset + 4, offset + 2 + len);
+            if (exif.slice(0, 4).toString() !== "Exif") return null;
+            return parseExifDate(exif.slice(6), source);
+          }
+          offset += 2 + len;
+        }
+      } catch { return null; }
+      return null;
+    }
+
+    function parseExifDate(tiff, source) {
+      try {
+        const le = tiff.readUInt16BE(0) === 0x4949;
+        const r16 = (o) => le ? tiff.readUInt16LE(o) : tiff.readUInt16BE(o);
+        const r32 = (o) => le ? tiff.readUInt32LE(o) : tiff.readUInt32BE(o);
+        // Find IFD0
+        let ifdOff = r32(4);
+        const tagId = source === "exifDigitized" ? 0x9004 : 0x9003;
+        // Search IFD0 for ExifIFD pointer (0x8769)
+        let count = r16(ifdOff);
+        let exifIfdOff = 0;
+        for (let i = 0; i < count; i++) {
+          const tag = r16(ifdOff + 2 + i * 12);
+          if (tag === 0x8769) { exifIfdOff = r32(ifdOff + 2 + i * 12 + 8); break; }
+        }
+        if (!exifIfdOff) return null;
+        // Search ExifIFD for date tag
+        count = r16(exifIfdOff);
+        for (let i = 0; i < count; i++) {
+          const entry = exifIfdOff + 2 + i * 12;
+          const tag = r16(entry);
+          if (tag === tagId) {
+            const valOff = r32(entry + 8);
+            const str = tiff.slice(valOff, valOff + 19).toString();
+            const [d, t] = str.split(" ");
+            const [y, mo, dy] = d.split(":");
+            const [h, mi, s] = t.split(":");
+            return new Date(+y, +mo - 1, +dy, +h, +mi, +s);
+          }
+        }
+      } catch { return null; }
+      return null;
+    }
+
+    function applyDateTime(step, name, ext, filePath) {
+      let date;
+      if (step.dateSource === "current") {
+        date = new Date();
+      } else if (step.dateSource === "created" && filePath) {
+        try { date = fs.statSync(filePath).birthtime; } catch { date = new Date(); }
+      } else if (step.dateSource === "modified" && filePath) {
+        try { date = fs.statSync(filePath).mtime; } catch { date = new Date(); }
+      } else if (step.dateSource === "exifOriginal" || step.dateSource === "exifDigitized") {
+        date = getExifDate(filePath, step.dateSource);
+        if (!date) return [name, ext]; // No EXIF data, don't change name
+      } else {
+        date = new Date();
+      }
+
+      const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      const monthsShort = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const tf = step.tokenFormats || {};
+
+      let result = step.format || "";
+      result = result.replace(/\{Filename\}/g, name);
+      result = result.replace(/\{Year(:[^}]*)?\}/g, (_m, f) => {
+        const fmt = (f ? f.slice(1) : null) || tf.Year || "YYYY";
+        return fmt === "YY" ? String(date.getFullYear()).slice(-2) : String(date.getFullYear());
+      });
+      result = result.replace(/\{Month(:[^}]*)?\}/g, (_m, f) => {
+        const fmt = (f ? f.slice(1) : null) || tf.Month || "MM";
+        if (fmt === "M") return String(date.getMonth() + 1);
+        if (fmt === "MM") return String(date.getMonth() + 1).padStart(2, "0");
+        if (fmt === "MMM") return monthsShort[date.getMonth()];
+        return months[date.getMonth()];
+      });
+      result = result.replace(/\{Day(:[^}]*)?\}/g, (_m, f) => {
+        const fmt = (f ? f.slice(1) : null) || tf.Day || "DD";
+        return fmt === "D" ? String(date.getDate()) : String(date.getDate()).padStart(2, "0");
+      });
+      result = result.replace(/\{Hour(:[^}]*)?\}/g, (_m, f) => {
+        const fmt = (f ? f.slice(1) : null) || tf.Hour || "00";
+        const h = date.getHours();
+        if (fmt === "1") return String(h % 12 || 12);
+        if (fmt === "11") return String(h % 12 || 12).padStart(2, "0");
+        if (fmt === "0") return String(h);
+        return String(h).padStart(2, "0");
+      });
+      result = result.replace(/\{Minute(:[^}]*)?\}/g, (_m, f) => {
+        const fmt = (f ? f.slice(1) : null) || tf.Minute || "MM";
+        return fmt === "M" ? String(date.getMinutes()) : String(date.getMinutes()).padStart(2, "0");
+      });
+      result = result.replace(/\{Second(:[^}]*)?\}/g, (_m, f) => {
+        const fmt = (f ? f.slice(1) : null) || tf.Second || "SS";
+        return fmt === "S" ? String(date.getSeconds()) : String(date.getSeconds()).padStart(2, "0");
+      });
+      result = result.replace(/\{AMPM\}/g, () => date.getHours() < 12 ? "AM" : "PM");
+
+      return [result, ext];
     }
 
     function convertCase(str, caseType) {
@@ -467,11 +1045,13 @@
 
     function updatePreview() {
       const tbody = document.getElementById("file-tbody");
+      const settings = load();
       const evenColor = config.rowColorEven || "#000000";
       const oddColor = config.rowColorOdd || "#1a1a1a";
+      const selColor = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
 
       // Compute new names
-      files.forEach(f => { f.newName = applyScript(f.name); });
+      files.forEach(f => { f.newName = applyScript(f.name, f.path); });
 
       // Sort
       const sorted = [...files];
@@ -480,8 +1060,6 @@
         const bv = sortCol === "current" ? b.name : b.newName;
         return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       });
-
-      const selColor = load().selectionColor || config.selectionColor || "#2e7d32";
 
       tbody.innerHTML = "";
       sorted.forEach((f, i) => {

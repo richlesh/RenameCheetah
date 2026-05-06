@@ -201,7 +201,7 @@ function openSettings() {
   if (settingsWin) return settingsWin.focus();
   settingsWin = new BrowserWindow({
     width: 400,
-    height: 300,
+    height: 200,
     resizable: false,
     parent: mainWin,
     modal: true,
@@ -212,7 +212,10 @@ function openSettings() {
   settingsWin.on("closed", () => { settingsWin = null; });
 }
 
-ipcMain.handle("settings-get-data", () => ({ settings: load() }));
+ipcMain.handle("settings-get-data", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
+  return { settings: load(), config };
+});
 
 ipcMain.handle("settings-save", (_e, newSettings) => {
   const existing = load();
@@ -248,6 +251,24 @@ ipcMain.handle("update-selection", (_e, hasSelection) => {
   const menu = Menu.getApplicationMenu();
   const item = menu?.getMenuItemById("remove-file");
   if (item) item.enabled = hasSelection;
+});
+
+ipcMain.handle("show-token-format-menu", (_e, items) => {
+  const template = items.map(i => ({
+    label: i.label,
+    click: () => mainWin?.webContents.send("token-format-selected", { tokId: i.tokId, fmt: i.fmt })
+  }));
+  Menu.buildFromTemplate(template).popup({ window: mainWin });
+});
+
+ipcMain.handle("show-token-format-menu-v2", (_e, items, tokStart, tokEnd) => {
+  const template = items.map(i => ({
+    label: i.fmt,
+    type: "checkbox",
+    checked: i.checked,
+    click: () => mainWin?.webContents.send("token-format-update", { tokId: i.tokId, fmt: i.fmt, tokStart, tokEnd })
+  }));
+  Menu.buildFromTemplate(template).popup({ window: mainWin });
 });
 
 ipcMain.handle("rename-files", async (_e, ops) => {

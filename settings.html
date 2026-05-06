@@ -32,7 +32,12 @@
       margin-bottom: 12px;
     }
     input:focus, select:focus { border-color: #0a84ff; }
-    input[type="color"] { height: 40px; padding: 4px; cursor: pointer; }
+    input[type="color"] { height: 32px; padding: 2px; cursor: pointer; }
+
+    .color-row { display: flex; gap: 10px; margin-bottom: 12px; }
+    .color-field { flex: 1; }
+    .color-field label { margin-bottom: 4px; }
+    .color-field input { width: 100%; }
 
     .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: auto; }
 
@@ -50,8 +55,20 @@
 <body>
   <h1>Settings</h1>
 
-  <label for="selection-color">Selection Highlight Color</label>
-  <input type="color" id="selection-color" value="#2e7d32">
+  <div class="color-row">
+    <div class="color-field">
+      <label for="script-highlight-color">Script Highlight</label>
+      <input type="color" id="script-highlight-color" value="#0a84ff">
+    </div>
+    <div class="color-field">
+      <label for="step-highlight-color">Step Highlight</label>
+      <input type="color" id="step-highlight-color" value="#0a84ff">
+    </div>
+    <div class="color-field">
+      <label for="file-highlight-color">File Highlight</label>
+      <input type="color" id="file-highlight-color" value="#2e7d32">
+    </div>
+  </div>
 
   <div class="row">
     <button id="cancel-btn">Cancel</button>
@@ -63,13 +80,17 @@
 
     let current = {};
 
-    ipcRenderer.invoke("settings-get-data").then(({ settings }) => {
+    ipcRenderer.invoke("settings-get-data").then(({ settings, config }) => {
       current = settings;
-      document.getElementById("selection-color").value = settings.selectionColor || "#2e7d32";
+      document.getElementById("script-highlight-color").value = settings.scriptHighlightColor || config.scriptHighlightColor || "#0a84ff";
+      document.getElementById("step-highlight-color").value = settings.stepHighlightColor || config.stepHighlightColor || "#0a84ff";
+      document.getElementById("file-highlight-color").value = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
     });
 
     document.getElementById("save-btn").addEventListener("click", () => {
-      current.selectionColor = document.getElementById("selection-color").value;
+      current.scriptHighlightColor = document.getElementById("script-highlight-color").value;
+      current.stepHighlightColor = document.getElementById("step-highlight-color").value;
+      current.fileHighlightColor = document.getElementById("file-highlight-color").value;
       ipcRenderer.invoke("settings-save", current);
     });
 
