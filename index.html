@@ -72,6 +72,15 @@
     let sortAsc = true;
     let dragSrcIdx = null;
 
+    const PREMIUM_STEPS = ["Add Metadata - Audio", "Add Metadata - Photo", "Add Metadata - Video", "Regular Expression"];
+    function isLicensed() {
+      const s = load();
+      if (!s.licenseKey || !s.userName) return false;
+      const hmac = nodeCrypto.createHmac("sha256", "RenameCheetah-2026");
+      hmac.update(s.userName.toLowerCase().trim());
+      return s.licenseKey.toUpperCase() === hmac.digest("hex").slice(0, 16).toUpperCase();
+    }
+
     // --- Init ---
     function init() {
       const settings = load();
@@ -191,6 +200,7 @@
       const stepHL = load().stepHighlightColor || config.stepHighlightColor || "#0a84ff";
       const script = scripts[selectedScriptIdx];
       if (!script) return;
+      const licensed = isLicensed();
       script.steps.forEach((step, i) => {
         const div = document.createElement("div");
         div.className = "step-card" + (i === selectedStepIdx ? " selected" : "");
@@ -230,7 +240,7 @@
         // Type selector
         const select = document.createElement("select");
         select.className = "step-type-select";
-        ["Add Audio Metadata", "Add Date/Time", "Add Photo Metadata", "Add Prefix", "Add Sequence Number", "Add Suffix", "Add Video Metadata", "Add/Replace Hash", "Convert Case", "Find & Replace", "Insert at Position", "Pad Number", "Regular Expression", "Remove Text", "Renumber", "Replace Spaces", "Sanitize", "Swap", "Trim"].forEach(t => {
+        ["Add Date/Time", "Add Metadata - Audio", "Add Metadata - Photo", "Add Metadata - Video", "Add Prefix", "Add Sequence Number", "Add Suffix", "Add/Replace Hash", "Convert Case", "Find & Replace", "Insert at Position", "Pad Number", "Regular Expression", "Remove Text", "Renumber", "Replace Spaces", "Sanitize", "Swap", "Trim"].forEach(t => {
           const opt = document.createElement("option");
           opt.value = t;
           opt.textContent = t;
@@ -249,6 +259,11 @@
         const fields = document.createElement("div");
         fields.className = "step-fields";
         buildStepFields(fields, step, i);
+        if (!licensed && PREMIUM_STEPS.includes(step.type)) {
+          fields.style.opacity = "0.4";
+          fields.style.pointerEvents = "none";
+          fields.querySelectorAll("input, select, textarea, button").forEach(el => { el.tabIndex = -1; });
+        }
         div.appendChild(fields);
 
         list.appendChild(div);
@@ -267,10 +282,10 @@
       else if (type === "Add Prefix") { step.prefix = ""; }
       else if (type === "Add Suffix") { step.suffix = ""; }
       else if (type === "Add Date/Time") { step.dateSource = "current"; step.format = ""; step.tokenFormats = {}; }
-      else if (type === "Add Photo Metadata") { step.format = ""; }
-      else if (type === "Add Audio Metadata") { step.format = ""; }
-      else if (type === "Add Video Metadata") { step.format = ""; }
-      else if (type === "Add/Replace Hash") { step.algorithm = "md5"; step.length = 8; step.position = "suffix"; step.separator = "_"; }
+      else if (type === "Add Metadata - Photo") { step.format = ""; }
+      else if (type === "Add Metadata - Audio") { step.format = ""; }
+      else if (type === "Add Metadata - Video") { step.format = ""; }
+      else if (type === "Add/Replace Hash") { step.mode = "add"; step.algorithm = "md5"; step.length = 8; step.position = "suffix"; step.separator = "_"; }
       else if (type === "Add Sequence Number") { step.start = 1; step.stepVal = 1; step.padding = 3; step.position = "prefix"; step.separator = "_"; }
       else if (type === "Renumber") { step.start = 1; step.stepVal = 1; step.padding = 0; }
       else if (type === "Pad Number") { step.width = 3; }
@@ -313,13 +328,14 @@
         container.appendChild(makeInput("Suffix:", step, "suffix", onChange));
       } else if (step.type === "Add Date/Time") {
         container.appendChild(makeDateTimeFields(step, onChange));
-      } else if (step.type === "Add Photo Metadata") {
+      } else if (step.type === "Add Metadata - Photo") {
         container.appendChild(makePhotoMetaFields(step, onChange));
-      } else if (step.type === "Add Audio Metadata") {
+      } else if (step.type === "Add Metadata - Audio") {
         container.appendChild(makeAudioMetaFields(step, onChange));
-      } else if (step.type === "Add Video Metadata") {
+      } else if (step.type === "Add Metadata - Video") {
         container.appendChild(makeVideoMetaFields(step, onChange));
       } else if (step.type === "Add/Replace Hash") {
+        container.appendChild(makeRadio("Mode:", step, "mode", [["add","Add"],["replace","Replace"],["remove","Remove"]], onChange));
         container.appendChild(makeSelect("Algorithm:", step, "algorithm", [["md5","MD5"],["sha1","SHA1"],["sha256","SHA256"]], onChange));
         container.appendChild(makeInput("Length:", step, "length", onChange));
         container.appendChild(makeSelect("Position:", step, "position", [["prefix","Prefix"],["suffix","Suffix"],["replace","Replace Name"]], onChange));
@@ -402,6 +418,26 @@
       });
       sel.addEventListener("change", () => { step[key] = sel.value; onChange(); });
       div.appendChild(sel);
+      return div;
+    }
+
+    function makeRadio(label, step, key, options, onChange) {
+      const div = document.createElement("div");
+      div.className = "field-row";
+      div.innerHTML = `<label>${label}</label>`;
+      options.forEach(([v, l]) => {
+        const lbl = document.createElement("label");
+        lbl.style.cssText = "display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:12px;color:#e0e0e0;cursor:pointer";
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = key + "-radio";
+        radio.value = v;
+        radio.checked = step[key] === v;
+        radio.addEventListener("change", () => { step[key] = v; onChange(); });
+        lbl.appendChild(radio);
+        lbl.append(l);
+        div.appendChild(lbl);
+      });
       return div;
     }
 
@@ -600,7 +636,7 @@
       return wrapper;
     }
 
-    // --- Add Photo Metadata Step ---
+    // --- Add Metadata - Photo Step ---
     const PHOTO_TOKENS = [
       { id: "Filename", label: "Filename" },
       { id: "Width", label: "Width" },
@@ -803,7 +839,7 @@
       } catch { return null; }
     }
 
-    // --- Add Audio Metadata Step ---
+    // --- Add Metadata - Audio Step ---
     const AUDIO_TOKENS = [
       { id: "Filename", label: "Filename" },
       { id: "Title", label: "Title" },
@@ -883,7 +919,7 @@
       return null;
     }
 
-    // --- Add Video Metadata Step ---
+    // --- Add Metadata - Video Step ---
     const VIDEO_TOKENS = [
       { id: "Filename", label: "Filename" },
       { id: "Width", label: "Width" },
@@ -908,14 +944,27 @@
     }
 
     function getVideoMeta(filePath) {
-      // Parse MP4 moov/trak for basic dimensions and duration
+      // Try ffprobe first (supports all video formats)
+      try {
+        const { execFileSync } = require("child_process");
+        const out = execFileSync("ffprobe", [
+          "-v", "quiet", "-print_format", "json",
+          "-show_format", "-show_streams", filePath
+        ], { timeout: 5000, encoding: "utf8" });
+        const info = JSON.parse(out);
+        const vid = (info.streams || []).find(s => s.codec_type === "video");
+        const width = vid ? parseInt(vid.width) || null : null;
+        const height = vid ? parseInt(vid.height) || null : null;
+        const dur = info.format && info.format.duration ? Math.round(parseFloat(info.format.duration)) + "s" : null;
+        if (width || dur) return { width, height, duration: dur };
+      } catch { /* ffprobe not available, fall through */ }
+
+      // Fallback: parse MP4/MOV container directly
       try {
         const fd = fs.openSync(filePath, "r");
         const buf = Buffer.alloc(8);
         fs.readSync(fd, buf, 0, 8, 0);
-        // Check for ftyp box
         if (buf.slice(4, 8).toString() !== "ftyp") { fs.closeSync(fd); return null; }
-        // Scan for moov box
         let offset = 0;
         const stat = fs.fstatSync(fd);
         while (offset < stat.size) {
@@ -968,10 +1017,30 @@
     function applyHash(step, name, ext, filePath) {
       if (!filePath) return [name, ext];
       try {
-        const content = fs.readFileSync(filePath);
-        const hash = nodeCrypto.createHash(step.algorithm || "md5").update(content).digest("hex").slice(0, parseInt(step.length) || 8);
+        const len = parseInt(step.length) || 8;
         const sep = step.separator || "";
+        const escapedSep = sep ? sep.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+        const hexPat = `[0-9a-fA-F]+`;
+
+        if (step.mode === "remove") {
+          if (step.position === "prefix") {
+            name = name.replace(new RegExp("^" + hexPat + escapedSep), "");
+          } else {
+            name = name.replace(new RegExp(escapedSep + hexPat + "$"), "");
+          }
+          return [name, ext];
+        }
+
+        const content = fs.readFileSync(filePath);
+        const hash = nodeCrypto.createHash(step.algorithm || "md5").update(content).digest("hex").slice(0, len);
         if (step.position === "replace") return [hash, ext];
+        if (step.mode === "replace") {
+          if (step.position === "prefix") {
+            name = name.replace(new RegExp("^" + hexPat + escapedSep), "");
+          } else {
+            name = name.replace(new RegExp(escapedSep + hexPat + "$"), "");
+          }
+        }
         if (step.position === "prefix") return [hash + sep + name, ext];
         return [name + sep + hash, ext];
       } catch { return [name, ext]; }
@@ -1088,11 +1157,13 @@
     function applyScript(filename, filePath, fileIndex) {
       const script = scripts[selectedScriptIdx];
       if (!script) return filename;
+      const licensed = isLicensed();
       let dotIdx = filename.lastIndexOf(".");
       let name = dotIdx > 0 ? filename.slice(0, dotIdx) : filename;
       let ext = dotIdx > 0 ? filename.slice(dotIdx + 1) : "";
 
       for (const step of script.steps) {
+        if (!licensed && PREMIUM_STEPS.includes(step.type)) continue;
         [name, ext] = applyStep(step, name, ext, filePath, fileIndex);
       }
       return ext ? name + "." + ext : name;
@@ -1129,11 +1200,11 @@
         return [name + step.suffix, ext];
       } else if (step.type === "Add Date/Time") {
         return applyDateTime(step, name, ext, filePath);
-      } else if (step.type === "Add Photo Metadata") {
+      } else if (step.type === "Add Metadata - Photo") {
         return applyPhotoMeta(step, name, ext, filePath);
-      } else if (step.type === "Add Audio Metadata") {
+      } else if (step.type === "Add Metadata - Audio") {
         return applyAudioMeta(step, name, ext, filePath);
-      } else if (step.type === "Add Video Metadata") {
+      } else if (step.type === "Add Metadata - Video") {
         return applyVideoMeta(step, name, ext, filePath);
       } else if (step.type === "Add/Replace Hash") {
         return applyHash(step, name, ext, filePath);
@@ -1376,7 +1447,13 @@
           if (fp) paths.push(fp);
         }
       }
-      if (paths.length > 0) { addFiles(paths); ipcRenderer.invoke("focus-window"); }
+      if (paths.length > 0) {
+        const clearOnDrop = !!load().clearOnDrop;
+        const shouldClear = e.shiftKey ? !clearOnDrop : clearOnDrop;
+        if (shouldClear) { files = []; selectedFiles.clear(); }
+        addFiles(paths);
+        ipcRenderer.invoke("focus-window");
+      }
     });
 
     // Context menu on empty area of file table
@@ -1395,6 +1472,60 @@
 
       // Compute new names
       files.forEach((f, idx) => { f.newName = applyScript(f.name, f.path, idx); });
+
+      // Deduplicate: case-insensitive on macOS/Windows, case-sensitive on Linux
+      const caseInsensitive = process.platform !== "linux";
+      const normName = (n) => caseInsensitive ? n.toLowerCase() : n;
+
+      // Build set of existing files per directory (cached per updatePreview call)
+      const dirFiles = {};
+      const getExisting = (dir) => {
+        if (!dirFiles[dir]) {
+          try {
+            dirFiles[dir] = new Set(fs.readdirSync(dir).map(n => normName(n)));
+          } catch { dirFiles[dir] = new Set(); }
+        }
+        return dirFiles[dir];
+      };
+
+      // Track claimed names per directory
+      const claimed = {};
+      files.forEach(f => {
+        const dir = path.dirname(f.path);
+        if (!claimed[dir]) claimed[dir] = {};
+        const key = normName(f.newName);
+        claimed[dir][key] = (claimed[dir][key] || 0) + 1;
+      });
+
+      const assigned = {};
+      files.forEach(f => {
+        const dir = path.dirname(f.path);
+        if (!assigned[dir]) assigned[dir] = {};
+        const key = normName(f.newName);
+        const existing = getExisting(dir);
+        // Needs suffix if: duplicate among batch, OR would clobber an existing file that isn't being renamed away
+        const isDuplicate = claimed[dir][key] > 1;
+        const wouldClobber = existing.has(key) && !files.some(o => normName(o.name) === key && path.dirname(o.path) === dir);
+        if (isDuplicate || wouldClobber) {
+          assigned[dir][key] = (assigned[dir][key] || 0) + 1;
+          let suffix = assigned[dir][key];
+          const addSuffix = (name, s) => {
+            const dotIdx = name.lastIndexOf(".");
+            return dotIdx > 0 ? name.slice(0, dotIdx) + "-" + s + name.slice(dotIdx) : name + "-" + s;
+          };
+          // Ensure the suffixed name itself doesn't collide
+          let candidate = addSuffix(f.newName, suffix);
+          while (existing.has(normName(candidate)) || assigned[dir][normName(candidate)]) {
+            suffix++;
+            candidate = addSuffix(f.newName, suffix);
+          }
+          assigned[dir][key] = suffix;
+          assigned[dir][normName(candidate)] = -1; // mark as taken
+          f.newName = candidate;
+        } else {
+          assigned[dir][key] = -1; // mark as taken
+        }
+      });
 
       // Sort
       const sorted = [...files];
@@ -1510,6 +1641,16 @@
     document.getElementById("col-new").addEventListener("click", () => {
       if (sortCol === "new") sortAsc = !sortAsc; else { sortCol = "new"; sortAsc = true; }
       updatePreview();
+    });
+
+    // Remove selected files on Backspace/Delete
+    document.addEventListener("keydown", (e) => {
+      if ((e.key === "Backspace" || e.key === "Delete") && selectedFiles.size > 0 && !e.target.closest("input, textarea, select")) {
+        e.preventDefault();
+        files = files.filter(f => !selectedFiles.has(f));
+        selectedFiles.clear();
+        updatePreview();
+      }
     });
 
     // Rename button

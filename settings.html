@@ -55,6 +55,11 @@
 <body>
   <h1>Settings</h1>
 
+  <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;color:#e0e0e0;cursor:pointer">
+    <input type="checkbox" id="clear-on-drop" style="width:auto;margin:0">
+    Clear file list on drag and drop
+  </label>
+
   <div class="color-row">
     <div class="color-field">
       <label for="script-highlight-color">Script Highlight</label>
@@ -85,12 +90,14 @@
       document.getElementById("script-highlight-color").value = settings.scriptHighlightColor || config.scriptHighlightColor || "#0a84ff";
       document.getElementById("step-highlight-color").value = settings.stepHighlightColor || config.stepHighlightColor || "#0a84ff";
       document.getElementById("file-highlight-color").value = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
+      document.getElementById("clear-on-drop").checked = !!settings.clearOnDrop;
     });
 
     document.getElementById("save-btn").addEventListener("click", () => {
       current.scriptHighlightColor = document.getElementById("script-highlight-color").value;
       current.stepHighlightColor = document.getElementById("step-highlight-color").value;
       current.fileHighlightColor = document.getElementById("file-highlight-color").value;
+      current.clearOnDrop = document.getElementById("clear-on-drop").checked;
       ipcRenderer.invoke("settings-save", current);
     });
 
