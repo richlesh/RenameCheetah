@@ -201,7 +201,7 @@ function openSettings() {
   if (settingsWin) return settingsWin.focus();
   settingsWin = new BrowserWindow({
     width: 400,
-    height: 280,
+    height: 380,
     resizable: false,
     parent: mainWin,
     modal: true,
@@ -225,6 +225,11 @@ ipcMain.handle("settings-save", (_e, newSettings) => {
 });
 
 ipcMain.handle("settings-cancel", () => settingsWin?.close());
+
+ipcMain.handle("browse-file", async () => {
+  const result = await dialog.showOpenDialog(settingsWin, { properties: ["openFile"] });
+  return result.canceled ? null : result.filePaths[0];
+});
 
 ipcMain.handle("open-external", (_e, url) => openExternal(url));
 

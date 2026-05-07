@@ -50,6 +50,7 @@
     }
     #cancel-btn { background: #3a3a3c; color: #e0e0e0; }
     #save-btn   { background: #0a84ff; color: #fff; }
+    .browse-btn { white-space: nowrap; padding: 8px 12px; background: #3a3a3c; color: #e0e0e0; }
   </style>
 </head>
 <body>
@@ -75,6 +76,18 @@
     </div>
   </div>
 
+  <label for="ffprobe-path">ffprobe Path</label>
+  <div style="display:flex;gap:6px;margin-bottom:12px">
+    <input type="text" id="ffprobe-path" placeholder="Auto-detect" style="margin-bottom:0">
+    <button class="browse-btn" id="browse-ffprobe">Browse…</button>
+  </div>
+
+  <label for="exiftool-path">exiftool Path</label>
+  <div style="display:flex;gap:6px;margin-bottom:12px">
+    <input type="text" id="exiftool-path" placeholder="Auto-detect" style="margin-bottom:0">
+    <button class="browse-btn" id="browse-exiftool">Browse…</button>
+  </div>
+
   <div class="row">
     <button id="cancel-btn">Cancel</button>
     <button id="save-btn">Save</button>
@@ -82,6 +95,22 @@
 
   <script>
     const { ipcRenderer } = require("electron");
+
+    const fs = require("fs");
+    const { execFileSync } = require("child_process");
+
+    function detectTool(name, searchPaths) {
+      try { execFileSync(name, ["-version"], { timeout: 3000, stdio: "ignore" }); return name; } catch {}
+      for (const p of searchPaths) { if (fs.existsSync(p)) return p; }
+      return "";
+    }
+
+    const FFPROBE_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\FFmpeg\\bin\\ffprobe.exe", "C:\\Program Files (x86)\\FFmpeg\\bin\\ffprobe.exe"]
+      : ["/usr/local/bin/ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/bin/ffprobe"];
+    const EXIFTOOL_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\ExifTool\\exiftool.exe", "C:\\Windows\\exiftool.exe"]
+      : ["/usr/local/bin/exiftool", "/opt/homebrew/bin/exiftool", "/usr/bin/exiftool"];
 
     let current = {};
 
@@ -91,6 +120,8 @@
       document.getElementById("step-highlight-color").value = settings.stepHighlightColor || config.stepHighlightColor || "#0a84ff";
       document.getElementById("file-highlight-color").value = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
       document.getElementById("clear-on-drop").checked = !!settings.clearOnDrop;
+      document.getElementById("ffprobe-path").value = settings.ffprobePath || detectTool("ffprobe", FFPROBE_PATHS);
+      document.getElementById("exiftool-path").value = settings.exiftoolPath || detectTool("exiftool", EXIFTOOL_PATHS);
     });
 
     document.getElementById("save-btn").addEventListener("click", () => {
@@ -98,11 +129,23 @@
       current.stepHighlightColor = document.getElementById("step-highlight-color").value;
       current.fileHighlightColor = document.getElementById("file-highlight-color").value;
       current.clearOnDrop = document.getElementById("clear-on-drop").checked;
+      current.ffprobePath = document.getElementById("ffprobe-path").value.trim();
+      current.exiftoolPath = document.getElementById("exiftool-path").value.trim();
       ipcRenderer.invoke("settings-save", current);
     });
 
     document.getElementById("cancel-btn").addEventListener("click", () => {
       ipcRenderer.invoke("settings-cancel");
+    });
+
+    document.getElementById("browse-ffprobe").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("ffprobe-path").value = result;
+    });
+
+    document.getElementById("browse-exiftool").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("exiftool-path").value = result;
     });
   </script>
 </body>
