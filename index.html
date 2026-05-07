@@ -752,6 +752,24 @@
     }
 
     function getPhotoMetadata(filePath) {
+      // Try exiftool first (supports JPEG, TIFF, PNG, WebP, HEIC, RAW, etc.)
+      try {
+        const { execFileSync } = require("child_process");
+        const out = execFileSync("exiftool", ["-json", "-ImageWidth", "-ImageHeight", "-XResolution", "-YResolution", "-GPSLatitude#", "-GPSLongitude#", "-GPSAltitude#", filePath], { timeout: 5000, encoding: "utf8" });
+        const meta = JSON.parse(out)[0];
+        if (!meta) return null;
+        return {
+          width: meta.ImageWidth || null,
+          height: meta.ImageHeight || null,
+          dpiWidth: meta.XResolution ? Math.round(meta.XResolution) : null,
+          dpiHeight: meta.YResolution ? Math.round(meta.YResolution) : null,
+          latitude: meta.GPSLatitude != null ? meta.GPSLatitude : null,
+          longitude: meta.GPSLongitude != null ? meta.GPSLongitude : null,
+          altitude: meta.GPSAltitude != null ? meta.GPSAltitude : null,
+        };
+      } catch { /* exiftool not available, fall through */ }
+
+      // Fallback: parse JPEG EXIF directly
       try {
         const buf = Buffer.alloc(65536);
         const fd = fs.openSync(filePath, "r");
@@ -865,11 +883,32 @@
     }
 
     function getID3Tags(filePath) {
+      // Try ffprobe first (supports MP3, FLAC, M4A, OGG, WMA, WAV, AIFF, etc.)
+      try {
+        const { execFileSync } = require("child_process");
+        const out = execFileSync("ffprobe", [
+          "-v", "quiet", "-print_format", "json", "-show_format", filePath
+        ], { timeout: 5000, encoding: "utf8" });
+        const info = JSON.parse(out);
+        const t = info.format && info.format.tags ? info.format.tags : {};
+        // Tag keys vary in case across formats
+        const get = (keys) => { for (const k of keys) { const v = t[k] || t[k.toUpperCase()] || t[k.toLowerCase()]; if (v) return v; } return ""; };
+        const tags = {
+          title: get(["title", "TITLE"]),
+          artist: get(["artist", "ARTIST", "ALBUMARTIST"]),
+          album: get(["album", "ALBUM"]),
+          track: get(["track", "TRACK", "TRACKNUMBER"]),
+          year: get(["date", "DATE", "year", "YEAR"]),
+          genre: get(["genre", "GENRE"]),
+        };
+        if (Object.values(tags).some(v => v)) return tags;
+      } catch { /* ffprobe not available, fall through */ }
+
+      // Fallback: parse MP3 ID3 tags directly
       try {
         const buf = Buffer.alloc(256);
         const fd = fs.openSync(filePath, "r");
         const stat = fs.fstatSync(fd);
-        // Try ID3v1 (last 128 bytes)
         if (stat.size >= 128) {
           fs.readSync(fd, buf, 0, 128, stat.size - 128);
           if (buf.slice(0, 3).toString() === "TAG") {
@@ -884,7 +923,6 @@
             };
           }
         }
-        // Try ID3v2
         fs.readSync(fd, buf, 0, 10, 0);
         if (buf.slice(0, 3).toString() === "ID3") {
           const size = (buf[6] << 21) | (buf[7] << 14) | (buf[8] << 7) | buf[9];
