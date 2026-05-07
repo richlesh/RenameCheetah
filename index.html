@@ -240,7 +240,7 @@
         // Type selector
         const select = document.createElement("select");
         select.className = "step-type-select";
-        ["Add Date/Time", "Add Metadata - Audio", "Add Metadata - Photo", "Add Metadata - Video", "Add Prefix", "Add Sequence Number", "Add Suffix", "Add/Replace Hash", "Convert Case", "Find & Replace", "Insert at Position", "Pad Number", "Regular Expression", "Remove Text", "Renumber", "Replace Spaces", "Sanitize", "Swap", "Trim"].forEach(t => {
+        ["Add Date/Time", "Add Metadata - Audio", "Add Metadata - Photo", "Add Metadata - Video", "Add Prefix", "Add Sequence Number", "Add Suffix", "Add/Replace Hash", "Convert Case", "Find & Replace", "Insert at Position", "Pad Number", "Regular Expression", "Remove Text", "Replace Spaces", "Sanitize", "Swap", "Trim"].forEach(t => {
           const opt = document.createElement("option");
           opt.value = t;
           opt.textContent = t;
@@ -287,7 +287,6 @@
       else if (type === "Add Metadata - Video") { step.format = ""; }
       else if (type === "Add/Replace Hash") { step.mode = "add"; step.algorithm = "md5"; step.length = 8; step.position = "suffix"; step.separator = "_"; }
       else if (type === "Add Sequence Number") { step.start = 1; step.stepVal = 1; step.padding = 3; step.position = "prefix"; step.separator = "_"; }
-      else if (type === "Renumber") { step.start = 1; step.stepVal = 1; step.padding = 0; }
       else if (type === "Pad Number") { step.width = 3; }
       else if (type === "Replace Spaces") { step.replaceWith = "_"; }
       else if (type === "Sanitize") { step.replacement = "_"; }
@@ -346,10 +345,6 @@
         container.appendChild(makeInput("Padding:", step, "padding", onChange));
         container.appendChild(makeSelect("Position:", step, "position", [["prefix","Prefix"],["suffix","Suffix"]], onChange));
         container.appendChild(makeInput("Separator:", step, "separator", onChange));
-      } else if (step.type === "Renumber") {
-        container.appendChild(makeInput("Start:", step, "start", onChange));
-        container.appendChild(makeInput("Step:", step, "stepVal", onChange));
-        container.appendChild(makeInput("Padding:", step, "padding", onChange));
       } else if (step.type === "Pad Number") {
         container.appendChild(makeInput("Width:", step, "width", onChange));
       } else if (step.type === "Replace Spaces") {
@@ -1213,17 +1208,6 @@
         const sep = step.separator || "";
         if (step.position === "suffix") return [name + sep + num, ext];
         return [num + sep + name, ext];
-      } else if (step.type === "Renumber") {
-        const start = parseInt(step.start) || 1;
-        const stepV = parseInt(step.stepVal) || 1;
-        const pad = parseInt(step.padding) || 0;
-        let idx = 0;
-        const result = name.replace(/\d+/g, () => {
-          const num = String(start + idx * stepV).padStart(pad, "0");
-          idx++;
-          return num;
-        });
-        return [result, ext];
       } else if (step.type === "Pad Number") {
         const width = parseInt(step.width) || 3;
         const result = name.replace(/\d+/g, m => m.padStart(width, "0"));
@@ -1431,7 +1415,7 @@
 
     dropZone.addEventListener("dragover", (e) => {
       e.preventDefault();
-      overlay.classList.add("visible");
+      if (e.dataTransfer.types.includes("Files")) overlay.classList.add("visible");
     });
     dropZone.addEventListener("dragleave", (e) => {
       if (!dropZone.contains(e.relatedTarget)) overlay.classList.remove("visible");
@@ -1470,9 +1454,25 @@
       const oddColor = config.rowColorOdd || "#1a1a1a";
       const selColor = settings.fileHighlightColor || config.fileHighlightColor || "#2e7d32";
 
-      // Compute new names
-      files.forEach((f, idx) => { f.newName = applyScript(f.name, f.path, idx); });
+      // Disable new-name sort if script has order-dependent steps
+      const orderDependent = scripts[selectedScriptIdx]?.steps?.some(s => s.type === "Add Sequence Number");
+      if (orderDependent && sortCol === "new") { sortCol = "current"; sortAsc = true; }
+      document.getElementById("col-new").style.opacity = orderDependent ? "0.4" : "";
+      document.getElementById("col-new").style.cursor = orderDependent ? "default" : "";
 
+      // Sort files into display order first
+      const sorted = [...files];
+      if (sortCol !== "manual") {
+        const sortBy = sortCol === "new" ? "new" : "current";
+        sorted.sort((a, b) => {
+          const av = sortBy === "new" ? a.newName || a.name : a.name;
+          const bv = sortBy === "new" ? b.newName || b.name : b.name;
+          return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+        });
+      }
+
+      // Compute new names using display order index
+      sorted.forEach((f, idx) => { f.newName = applyScript(f.name, f.path, idx); });
       // Deduplicate: test each directory for case sensitivity
       const caseSensitiveCache = {};
       function isDirCaseSensitive(dir) {
@@ -1506,7 +1506,7 @@
 
       // Track claimed names per directory
       const claimed = {};
-      files.forEach(f => {
+      sorted.forEach(f => {
         const dir = path.dirname(f.path);
         if (!claimed[dir]) claimed[dir] = {};
         const key = normNameForDir(f.newName, dir);
@@ -1514,14 +1514,14 @@
       });
 
       const assigned = {};
-      files.forEach(f => {
+      sorted.forEach(f => {
         const dir = path.dirname(f.path);
         if (!assigned[dir]) assigned[dir] = {};
         const key = normNameForDir(f.newName, dir);
         const existing = getExisting(dir);
         // Needs suffix if: duplicate among batch, OR would clobber an existing file that isn't being renamed away
         const isDuplicate = claimed[dir][key] > 1;
-        const wouldClobber = existing.has(key) && !files.some(o => normNameForDir(o.name, dir) === key && path.dirname(o.path) === dir);
+        const wouldClobber = existing.has(key) && !sorted.some(o => normNameForDir(o.name, dir) === key && path.dirname(o.path) === dir);
         if (isDuplicate || wouldClobber) {
           assigned[dir][key] = (assigned[dir][key] || 0) + 1;
           let suffix = assigned[dir][key];
@@ -1543,14 +1543,7 @@
         }
       });
 
-      // Sort
-      const sorted = [...files];
-      sorted.sort((a, b) => {
-        const av = sortCol === "current" ? a.name : a.newName;
-        const bv = sortCol === "current" ? b.name : b.newName;
-        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-      });
-
+      let fileDragIdx = null;
       tbody.innerHTML = "";
       sorted.forEach((f, i) => {
         const tr = document.createElement("tr");
@@ -1565,6 +1558,27 @@
         tr.appendChild(tdCurrent);
         tr.appendChild(document.createElement("td"));
         tr.appendChild(tdNew);
+
+        // Drag to reorder
+        tr.draggable = true;
+        tr.addEventListener("dragstart", (e) => { fileDragIdx = i; e.dataTransfer.effectAllowed = "move"; });
+        tr.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; tr.style.borderTop = "2px solid #0a84ff"; });
+        tr.addEventListener("dragleave", () => { tr.style.borderTop = ""; });
+        tr.addEventListener("drop", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          tr.style.borderTop = "";
+          if (fileDragIdx === null || fileDragIdx === i) return;
+          // Switch to manual order: reorder the files array to match sorted then apply the move
+          files.length = 0;
+          sorted.forEach(sf => files.push(sf));
+          const [moved] = files.splice(fileDragIdx, 1);
+          files.splice(i, 0, moved);
+          sortCol = "manual";
+          fileDragIdx = null;
+          updatePreview();
+        });
+        tr.addEventListener("dragend", () => { fileDragIdx = null; });
 
         // Click to select/deselect (multi-select)
         tr.addEventListener("click", (e) => {
@@ -1654,7 +1668,13 @@
       if (sortCol === "current") sortAsc = !sortAsc; else { sortCol = "current"; sortAsc = true; }
       updatePreview();
     });
+    function hasOrderDependentStep() {
+      const script = scripts[selectedScriptIdx];
+      return script && script.steps.some(s => s.type === "Add Sequence Number");
+    }
+
     document.getElementById("col-new").addEventListener("click", () => {
+      if (hasOrderDependentStep()) return;
       if (sortCol === "new") sortAsc = !sortAsc; else { sortCol = "new"; sortAsc = true; }
       updatePreview();
     });
