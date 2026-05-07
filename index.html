@@ -1473,16 +1473,32 @@
       // Compute new names
       files.forEach((f, idx) => { f.newName = applyScript(f.name, f.path, idx); });
 
-      // Deduplicate: case-insensitive on macOS/Windows, case-sensitive on Linux
-      const caseInsensitive = process.platform !== "linux";
-      const normName = (n) => caseInsensitive ? n.toLowerCase() : n;
+      // Deduplicate: test each directory for case sensitivity
+      const caseSensitiveCache = {};
+      function isDirCaseSensitive(dir) {
+        if (caseSensitiveCache[dir] != null) return caseSensitiveCache[dir];
+        try {
+          const chars = "abcdefghijklmnopqrstuvwxyz";
+          let rand = "temp_";
+          for (let i = 0; i < 16; i++) rand += chars[Math.floor(Math.random() * 26)];
+          const tmpPath = path.join(dir, rand);
+          fs.writeFileSync(tmpPath, "RenameCheetah");
+          const upperExists = fs.existsSync(path.join(dir, rand.toUpperCase()));
+          fs.unlinkSync(tmpPath);
+          caseSensitiveCache[dir] = !upperExists;
+        } catch {
+          caseSensitiveCache[dir] = process.platform === "linux";
+        }
+        return caseSensitiveCache[dir];
+      }
+      const normNameForDir = (n, dir) => isDirCaseSensitive(dir) ? n : n.toLowerCase();
 
       // Build set of existing files per directory (cached per updatePreview call)
       const dirFiles = {};
       const getExisting = (dir) => {
         if (!dirFiles[dir]) {
           try {
-            dirFiles[dir] = new Set(fs.readdirSync(dir).map(n => normName(n)));
+            dirFiles[dir] = new Set(fs.readdirSync(dir).map(n => normNameForDir(n, dir)));
           } catch { dirFiles[dir] = new Set(); }
         }
         return dirFiles[dir];
@@ -1493,7 +1509,7 @@
       files.forEach(f => {
         const dir = path.dirname(f.path);
         if (!claimed[dir]) claimed[dir] = {};
-        const key = normName(f.newName);
+        const key = normNameForDir(f.newName, dir);
         claimed[dir][key] = (claimed[dir][key] || 0) + 1;
       });
 
@@ -1501,11 +1517,11 @@
       files.forEach(f => {
         const dir = path.dirname(f.path);
         if (!assigned[dir]) assigned[dir] = {};
-        const key = normName(f.newName);
+        const key = normNameForDir(f.newName, dir);
         const existing = getExisting(dir);
         // Needs suffix if: duplicate among batch, OR would clobber an existing file that isn't being renamed away
         const isDuplicate = claimed[dir][key] > 1;
-        const wouldClobber = existing.has(key) && !files.some(o => normName(o.name) === key && path.dirname(o.path) === dir);
+        const wouldClobber = existing.has(key) && !files.some(o => normNameForDir(o.name, dir) === key && path.dirname(o.path) === dir);
         if (isDuplicate || wouldClobber) {
           assigned[dir][key] = (assigned[dir][key] || 0) + 1;
           let suffix = assigned[dir][key];
@@ -1515,12 +1531,12 @@
           };
           // Ensure the suffixed name itself doesn't collide
           let candidate = addSuffix(f.newName, suffix);
-          while (existing.has(normName(candidate)) || assigned[dir][normName(candidate)]) {
+          while (existing.has(normNameForDir(candidate, dir)) || assigned[dir][normNameForDir(candidate, dir)]) {
             suffix++;
             candidate = addSuffix(f.newName, suffix);
           }
           assigned[dir][key] = suffix;
-          assigned[dir][normName(candidate)] = -1; // mark as taken
+          assigned[dir][normNameForDir(candidate, dir)] = -1; // mark as taken
           f.newName = candidate;
         } else {
           assigned[dir][key] = -1; // mark as taken
