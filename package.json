@@ -33,7 +33,16 @@
       "category": "public.app-category.productivity",
       "target": "dmg",
       "identity": "RICHARD A LESH (MMZ3Y97NTP)",
-      "notarize": true
+      "notarize": true,
+      "extendInfo": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.item"]
+          }
+        ]
+      }
     },
     "win": {
       "target": "nsis"

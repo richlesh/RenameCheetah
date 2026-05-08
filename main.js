@@ -73,6 +73,11 @@ function createWindow() {
   if (!mainWin) {
     mainWin = win;
     buildMenu();
+    win.webContents.once("did-finish-load", () => {
+      if (pendingFiles.length > 0) {
+        win.webContents.send("files-dropped", pendingFiles.splice(0));
+      }
+    });
   }
   return win;
 }
@@ -313,6 +318,17 @@ function showSplash(nagOnly) {
   ipcMain.once("splash-close", handler);
   splash.on("closed", () => ipcMain.removeListener("splash-close", handler));
 }
+
+// macOS: handle files dropped on dock icon or opened via Finder
+const pendingFiles = [];
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  if (mainWin) {
+    mainWin.webContents.send("files-dropped", [filePath]);
+  } else {
+    pendingFiles.push(filePath);
+  }
+});
 
 app.whenReady().then(() => {
   const { licenseKey, userName } = load();
