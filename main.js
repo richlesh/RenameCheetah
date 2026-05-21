@@ -175,8 +175,8 @@ let licenseWin;
 function openLicense() {
   if (licenseWin) return licenseWin.focus();
   licenseWin = new BrowserWindow({
-    width: 360,
-    height: 260,
+    width: 400,
+    height: 290,
     resizable: false,
     parent: mainWin,
     modal: true,
