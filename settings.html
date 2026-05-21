@@ -18,7 +18,7 @@
 
     h1 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
 
-    label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+    label { display: block; font-size: 14px; color: #aaa; margin-bottom: 4px; }
 
     input, select {
       width: 100%;
@@ -100,16 +100,18 @@
     const { execFileSync } = require("child_process");
 
     function detectTool(name, searchPaths) {
-      try { execFileSync(name, ["-version"], { timeout: 3000, stdio: "ignore" }); return name; } catch {}
+      try { execFileSync(name, [name === "exiftool" ? "-ver" : "-version"], { timeout: 3000, stdio: "ignore" }); return name; } catch {}
       for (const p of searchPaths) { if (fs.existsSync(p)) return p; }
       return "";
     }
 
+    const scoopGlobal = "C:\\ProgramData\\scoop\\shims";
+    const scoopUser = (process.env.USERPROFILE || "") + "\\scoop\\shims";
     const FFPROBE_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\FFmpeg\\bin\\ffprobe.exe", "C:\\Program Files (x86)\\FFmpeg\\bin\\ffprobe.exe"]
+      ? [scoopGlobal + "\\ffprobe.exe", scoopUser + "\\ffprobe.exe", "C:\\Program Files\\FFmpeg\\bin\\ffprobe.exe", "C:\\Program Files (x86)\\FFmpeg\\bin\\ffprobe.exe"]
       : ["/usr/local/bin/ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/bin/ffprobe"];
     const EXIFTOOL_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\ExifTool\\exiftool.exe", "C:\\Windows\\exiftool.exe"]
+      ? [scoopGlobal + "\\exiftool.exe", scoopUser + "\\exiftool.exe", "C:\\Program Files\\ExifTool\\exiftool.exe", "C:\\Windows\\exiftool.exe"]
       : ["/usr/local/bin/exiftool", "/opt/homebrew/bin/exiftool", "/usr/bin/exiftool"];
 
     let current = {};

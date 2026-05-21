@@ -65,11 +65,13 @@
     const { load, save } = require("./settings");
 
     // Auto-detect tool paths
+    const scoopGlobal = "C:\\ProgramData\\scoop\\shims";
+    const scoopUser = (process.env.USERPROFILE || "") + "\\scoop\\shims";
     const FFPROBE_SEARCH = process.platform === "win32"
-      ? ["C:\\Program Files\\FFmpeg\\bin\\ffprobe.exe", "C:\\Program Files (x86)\\FFmpeg\\bin\\ffprobe.exe"]
+      ? [scoopGlobal + "\\ffprobe.exe", scoopUser + "\\ffprobe.exe", "C:\\Program Files\\FFmpeg\\bin\\ffprobe.exe", "C:\\Program Files (x86)\\FFmpeg\\bin\\ffprobe.exe"]
       : ["/usr/local/bin/ffprobe", "/opt/homebrew/bin/ffprobe", "/usr/bin/ffprobe"];
     const EXIFTOOL_SEARCH = process.platform === "win32"
-      ? ["C:\\Program Files\\ExifTool\\exiftool.exe", "C:\\Windows\\exiftool.exe"]
+      ? [scoopGlobal + "\\exiftool.exe", scoopUser + "\\exiftool.exe", "C:\\Program Files\\ExifTool\\exiftool.exe", "C:\\Windows\\exiftool.exe"]
       : ["/usr/local/bin/exiftool", "/opt/homebrew/bin/exiftool", "/usr/bin/exiftool"];
 
     function findTool(settingsKey, searchPaths, name) {
