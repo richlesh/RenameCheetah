@@ -1,4 +1,4 @@
-# RenameCheetah v1.1.0
+# RenameCheetah v1.2.0
 
 A fast, scriptable batch file renaming utility for macOS, Windows, and Linux.
 
@@ -9,9 +9,11 @@ A fast, scriptable batch file renaming utility for macOS, Windows, and Linux.
 ## Features
 
 - **Rename Scripts** — Create, duplicate, and manage reusable rename scripts
-- **Script Steps** — Chain multiple operations: Find & Replace, Remove Text, Add Prefix, Add Suffix, Convert Case
-- **Drag & Drop** — Drop files onto the app to preview renames instantly
+- **18 Script Step Types** — Find & Replace, Remove Text, Add Prefix, Add Suffix, Convert Case, Add Date/Time, Add Sequence Number, Insert at Position, Pad Number, Regular Expression, Replace Spaces, Sanitize, Swap, Trim, Add/Replace Hash, Add Metadata (Audio, Photo, Video)
+- **Metadata via External Tools** — Audio/video metadata via ffprobe, photo metadata via exiftool (auto-detected or configurable paths)
+- **Drag & Drop** — Drop files onto the app or the macOS dock icon to preview renames instantly
 - **Live Preview** — See "Current Name" vs "New Name" side-by-side before committing
+- **Duplicate Filename Handling** — Automatic dedup with case-sensitivity awareness per directory
 - **Multi-Select** — Select multiple files to remove from the list
 - **Inline Rename** — Double-click a filename to rename it immediately
 - **Drag-Reorderable Steps** — Reorder script steps by dragging
@@ -20,9 +22,9 @@ A fast, scriptable batch file renaming utility for macOS, Windows, and Linux.
 - **Persistent Layout** — Window size, position, and divider positions saved between sessions
 - **Auto-Save** — Scripts auto-save on a configurable interval (default 120s)
 - **Context Menu** — Right-click files for Remove, Add Files, or Clear Files
-- **Configurable** — Row colors, selection highlight color, and auto-save interval via config and settings
+- **Configurable** — Row colors, selection highlight color, tool paths, and auto-save interval via settings
 - **Cross-Platform** — macOS, Windows, and Linux builds via electron-builder
-- **Code Signing** — macOS code signing and notarization support
+- **Code Signing** — macOS code signing and Windows Azure Artifact Signing support
 - **License Key** — HMAC-SHA256 based license key system with splash nag for unlicensed users
 
 ---
@@ -76,13 +78,15 @@ RenameCheetah/
 ├── settings.html        # Settings window
 ├── settings.js          # Settings module (load/save)
 ├── about.html           # About dialog
-├── license_dialog.html         # License key entry
+├── license_dialog.html  # License key entry
 ├── splash.html          # Splash screen
 ├── config.json          # App configuration (colors, autosave interval)
 ├── package.json         # npm/electron-builder config
 ├── app_icon.png/.icns/.ico  # App icons
 ├── generate_license_key.py  # License key generator
 ├── sign-mac.sh          # macOS code signing script
+├── User_Manual.md       # User documentation
+├── LICENSE              # GPL 3.0 license
 └── .github/workflows/   # CI/CD workflows
 ```
 
