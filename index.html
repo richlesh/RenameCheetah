@@ -63,6 +63,7 @@
     const { execFileSync } = require("child_process");
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
     const { load, save } = require("./settings");
+    const { LICENSE_SALT } = require("./license");
 
     // Auto-detect tool paths
     const scoopGlobal = "C:\\ProgramData\\scoop\\shims";
@@ -100,7 +101,7 @@
     function isLicensed() {
       const s = load();
       if (!s.licenseKey || !s.userName) return false;
-      const hmac = nodeCrypto.createHmac("sha256", "RenameCheetah-2026");
+      const hmac = nodeCrypto.createHmac("sha256", LICENSE_SALT);
       hmac.update(s.userName.toLowerCase().trim());
       return s.licenseKey.toUpperCase() === hmac.digest("hex").slice(0, 16).toUpperCase();
     }

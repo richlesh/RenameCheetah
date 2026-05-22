@@ -83,20 +83,10 @@ RenameCheetah/
 ├── config.json          # App configuration (colors, autosave interval)
 ├── package.json         # npm/electron-builder config
 ├── app_icon.png/.icns/.ico  # App icons
-├── generate_license_key.py  # License key generator
 ├── sign-mac.sh          # macOS code signing script
 ├── User_Manual.md       # User documentation
 ├── LICENSE              # GPL 3.0 license
 └── .github/workflows/   # CI/CD workflows
-```
-
----
-
-## License Key
-
-Generate a license key for a user:
-```bash
-python3 generate_license_key.py user@example.com
 ```
 
 ---

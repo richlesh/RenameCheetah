@@ -4,8 +4,7 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const nodeCrypto = require("crypto");
 const { load, save } = require("./settings");
-
-const LICENSE_SALT = "RenameCheetah-2026";
+const { LICENSE_SALT } = require("./license");
 
 function openExternal(url) {
   if (process.platform === "linux") {
