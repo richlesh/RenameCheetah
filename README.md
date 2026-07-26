@@ -1,3 +1,5 @@
+![app_icon_256](app_icon_256.png)
+
 # RenameCheetah v1.2.0
 
 A fast, scriptable batch file renaming utility for macOS, Windows, and Linux.
