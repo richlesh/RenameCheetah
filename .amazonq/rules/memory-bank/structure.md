@@ -13,7 +13,7 @@ RenameCheetah/
 ├── splash.html                # Splash/loading screen
 ├── config.json                # App configuration (empty, ready for extension)
 ├── package.json               # npm config, electron-builder config
-├── app_icon.png / .icns / .ico  # App icons for all platforms
+├── resources/                 # App icons (app_icon.png / .icns / .ico, app_icon_256.png) for all platforms
 ├── generate_license_key.py    # Standalone utility: license key generation
 ├── sign-mac.sh                # macOS code signing script
 ├── .gitignore

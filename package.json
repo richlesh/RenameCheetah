@@ -17,16 +17,16 @@
   "build": {
     "appId": "com.richardlesh.renamecheetah",
     "productName": "RenameCheetah",
-    "icon": "app_icon",
+    "icon": "resources/app_icon",
     "artifactName": "RenameCheetah-${version}-${arch}.${ext}",
     "files": [
       "*.js",
       "*.html",
       "*.css",
       "*.json",
-      "*.png",
-      "*.icns",
-      "*.ico",
+      "resources/*.png",
+      "resources/*.icns",
+      "resources/*.ico",
       "node_modules/**"
     ],
     "mac": {
@@ -48,7 +48,7 @@
       "target": "nsis"
     },
     "linux": {
-      "icon": "app_icon_256.png",
+      "icon": "resources/app_icon_256.png",
       "category": "Utility",
       "target": [
         {

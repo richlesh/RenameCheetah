@@ -1,4 +1,4 @@
-![app_icon_256](app_icon_256.png)
+![app_icon_256](resources/app_icon_256.png)
 
 # RenameCheetah v1.2.0
 
@@ -84,7 +84,7 @@ RenameCheetah/
 ├── splash.html          # Splash screen
 ├── config.json          # App configuration (colors, autosave interval)
 ├── package.json         # npm/electron-builder config
-├── app_icon.png/.icns/.ico  # App icons
+├── resources/           # App icons (app_icon.png/.icns/.ico, app_icon_256.png)
 ├── sign-mac.sh          # macOS code signing script
 ├── User_Manual.md       # User documentation
 ├── LICENSE              # GPL 3.0 license

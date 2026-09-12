@@ -14,7 +14,7 @@ function openExternal(url) {
   }
 }
 
-const appIcon = nativeImage.createFromPath(path.join(__dirname, "app_icon.icns"));
+const appIcon = nativeImage.createFromPath(path.join(__dirname, "resources", "app_icon.icns"));
 
 app.name = "RenameCheetah";
 
@@ -96,7 +96,7 @@ function showAbout() {
     aboutWin.show();
   });
   aboutWin.webContents.once("did-finish-load", () => {
-    aboutWin.webContents.send("icon-path", path.join(__dirname, "app_icon.png"));
+    aboutWin.webContents.send("icon-path", path.join(__dirname, "resources", "app_icon.png"));
     aboutWin.webContents.send("app-version", require("./package.json").version);
     const { licenseKey, userName } = load();
     if (isValidLicense(licenseKey, userName)) aboutWin.webContents.send("licensed");
@@ -294,7 +294,7 @@ function showSplash(nagOnly) {
   });
   splash.loadFile("splash.html");
   splash.webContents.once("did-finish-load", () => {
-    splash.webContents.send("icon-path", path.join(__dirname, "app_icon.png"));
+    splash.webContents.send("icon-path", path.join(__dirname, "resources", "app_icon.png"));
     splash.webContents.send("app-version", require("./package.json").version);
   });
 
