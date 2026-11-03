@@ -1,7 +1,7 @@
 {
   "name": "renamecheetah",
   "productName": "RenameCheetah",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "RenameCheetah - Fast and easy file renaming",
   "main": "main.js",
   "scripts": {

@@ -1,0 +1,266 @@
+name: Release
+
+# Version-driven releases. The single source of truth is the "version" field
+# in package.json. When that version is bumped to a value that does NOT yet have
+# a matching tag/release, this workflow automatically creates the tag (the bare
+# version, e.g. 1.2.2 — no leading "v") and a GitHub release, then builds and
+# uploads the macOS / Windows / Linux artifacts to it.
+#
+# Pushing a commit whose package.json version already has a release is a no-op
+# (the create-release job detects the existing release and the build jobs skip),
+# so normal commits don't spam releases — only a *new* version triggers one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # Read the version from package.json and, if there's no release for it yet,
+  # create the tag (bare version, no "v") and the GitHub release. Downstream
+  # build jobs only run when a release exists to upload to.
+  create-release:
+    name: Create tag and release
+    runs-on: ubuntu-latest
+    outputs:
+      # The release tag (== the bare package.json version, e.g. "1.2.2").
+      tag: ${{ steps.ver.outputs.version }}
+      # "true" when this run should build + publish (a new version), else "false".
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Read version from package.json
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          VERSION="${VERSION#v}"   # defensively strip a leading v if present
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::Invalid version '$VERSION' in package.json (expected X.Y.Z)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package.json version: $VERSION"
+
+      - name: Decide whether to publish
+        id: decide
+        env:
+          TAG: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # If a release for this exact tag already exists, this is not a new
+          # version — skip building/publishing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and release
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create + push the tag if it doesn't already exist (bare version,
+          # no leading "v").
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin; reusing it."
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed tag $TAG."
+          fi
+
+          # Create the (empty) release the build jobs will upload assets to.
+          gh release create "$TAG" \
+            --title "RenameCheetah $TAG" \
+            --notes "Automated release for version $TAG." \
+            --target "$GITHUB_SHA"
+
+  build-mac:
+    name: macOS (${{ matrix.arch }})
+    needs: create-release
+    if: needs.create-release.outputs.publish == 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          KEYCHAIN_PASSWORD=build-keychain-password
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "$CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -k $KEYCHAIN_PATH -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Inject license salt
+        run: |
+          echo "const LICENSE_SALT = \"${{ secrets.LICENSE_SALT }}\";" > license.js
+          echo "module.exports = { LICENSE_SALT };" >> license.js
+
+      - name: Build macOS ${{ matrix.arch }} DMG
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: MMZ3Y97NTP
+          CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain
+          CSC_KEY_PASSWORD: build-keychain-password
+        run: |
+          KEY_FILE=$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
+          echo "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
+          APPLE_API_KEY="$KEY_FILE" ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
+
+      - name: Upload DMG to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            dist/*.dmg --clobber
+
+  build-windows:
+    name: Windows (${{ matrix.arch }})
+    needs: create-release
+    if: needs.create-release.outputs.publish == 'true'
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Inject license salt
+        run: |
+          @"
+          const LICENSE_SALT = "${{ secrets.LICENSE_SALT }}";
+          module.exports = { LICENSE_SALT };
+          "@ | Set-Content license.js
+        shell: powershell
+
+      - name: Build Windows ${{ matrix.arch }} installer
+        run: ./node_modules/.bin/electron-builder --win --${{ matrix.arch }} --publish never
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign installer with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Upload installer to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.create-release.outputs.tag }}" `
+            (Get-ChildItem dist\*.exe | Select-Object -ExpandProperty FullName) --clobber
+        shell: powershell
+
+  build-linux:
+    name: Linux (${{ matrix.arch }})
+    needs: create-release
+    if: needs.create-release.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ARM64 cross-compilation tools
+        if: matrix.arch == 'arm64'
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Inject license salt
+        run: |
+          echo "const LICENSE_SALT = \"${{ secrets.LICENSE_SALT }}\";" > license.js
+          echo "module.exports = { LICENSE_SALT };" >> license.js
+
+      - name: Build Linux ${{ matrix.arch }}
+        run: ./node_modules/.bin/electron-builder --linux --${{ matrix.arch }} --publish never
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            dist/*.deb dist/*.rpm --clobber
