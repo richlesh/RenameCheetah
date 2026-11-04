@@ -15,7 +15,12 @@ on:
     branches: [main]
     paths:
       - "package.json"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.2.3). Leave empty to use the package.json version. A tag/release is created automatically if it doesn't already exist."
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -42,18 +47,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read version from package.json
+      - name: Read version (input override, else package.json)
         id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="$(node -p "require('./package.json').version")"
-          VERSION="${VERSION#v}"   # defensively strip a leading v if present
+          # Use the manually supplied version when given (workflow_dispatch),
+          # otherwise fall back to the package.json version (push trigger).
+          VERSION="${INPUT_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(node -p "require('./package.json').version")"
+            VERSION="${VERSION#v}"
+          fi
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "::error::Invalid version '$VERSION' in package.json (expected X.Y.Z)."
+            echo "::error::Invalid version '$VERSION' (expected X.Y.Z)."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "package.json version: $VERSION"
+          echo "Release version: $VERSION"
 
       - name: Decide whether to publish
         id: decide
@@ -120,6 +132,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stamp release version
+        shell: bash
+        run: npm version "${{ needs.create-release.outputs.tag }}" --no-git-tag-version --allow-same-version
+
       - name: Import Developer ID certificate
         env:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -185,6 +201,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stamp release version
+        shell: bash
+        run: npm version "${{ needs.create-release.outputs.tag }}" --no-git-tag-version --allow-same-version
+
       - name: Inject license salt
         run: |
           @"
@@ -245,6 +265,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Stamp release version
+        shell: bash
+        run: npm version "${{ needs.create-release.outputs.tag }}" --no-git-tag-version --allow-same-version
 
       - name: Install ARM64 cross-compilation tools
         if: matrix.arch == 'arm64'
